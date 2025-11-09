@@ -12,21 +12,33 @@ st.write("Analise estratégias com base em dados e visualize risco × ganho espe
 def carregar_dados_cnj(limite=100):
     """
     Carrega dados reais de processos diretamente do CNJ (DataJud API).
-    O parâmetro 'limite' controla quantos processos serão trazidos (máx. 100 por página).
+    Agora com autenticação via APIKey fornecida pelo CNJ.
     """
     url = f"https://api-publica.datajud.cnj.jus.br/api_publica_teste/processos?limit={limite}"
+    
+    # Cabeçalho exigido pelo CNJ
+    headers = {
+        "Authorization": "APIKey cDZHYzlZa0JadVREZDJCendQbXY6SkJlTzNjLV9TRENyQk1RdnFKZGRQdw=="
+    }
+
     try:
-        resposta = requests.get(url, timeout=30)
-        resposta.raise_for_status()
-        dados = resposta.json()
-        resultados = dados.get("results", [])
-        if not resultados:
-            st.warning("Nenhum processo encontrado na API do CNJ.")
+        resposta = requests.get(url, headers=headers, timeout=30)
+        if resposta.status_code == 200:
+            dados = resposta.json()
+            resultados = dados.get("results", [])
+            if not resultados:
+                st.warning("Nenhum processo retornado pela API do CNJ.")
+                return pd.DataFrame()
+            df = pd.json_normalize(resultados)
+            return df
+        elif resposta.status_code == 401:
+            st.error("Erro 401 — Chave inválida ou expirada. Verifique sua APIKey no site do CNJ.")
             return pd.DataFrame()
-        df = pd.json_normalize(resultados)
-        return df
+        else:
+            st.error(f"Erro {resposta.status_code}: {resposta.text}")
+            return pd.DataFrame()
     except Exception as e:
-        st.error(f"Erro ao acessar a API do CNJ: {e}")
+        st.error(f"Falha ao consultar o CNJ: {e}")
         return pd.DataFrame()
 
 @st.cache_data
