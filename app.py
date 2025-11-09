@@ -169,14 +169,14 @@ except Exception as e:
 # --- LAYOUT DO SIMULADOR ---
 
 st.title("⚖️ Simulador de Estratégia Processual - STJ")
-st.caption("Baseado em dados do DataJud (CNJ) | Desenvolvido para Programação para Advogados.")
+st.caption("Baseado em dados do DataJud (CNJ)")
 
 tab1, tab2 = st.tabs(["📈 SIMULAÇÃO E RESULTADOS", "💡 SOBRE E METODOLOGIA"])
 
 with tab2:
     st.header("Metodologia e Funcionamento")
     st.markdown("""
-    Este simulador utiliza dados de processos judiciais, priorizando a **API Pública do STJ** quando os dados estão limpos e caindo em um **DataSet Simulado** quando a API falha.
+    Este simulador utiliza dados de processos judiciais, priorizando a API Pública do STJ quando os dados estão limpos e caindo em um DataSet Simulado quando a API falha.
     """)
     
     st.subheader("Análise Estatística (O Algoritmo)")
