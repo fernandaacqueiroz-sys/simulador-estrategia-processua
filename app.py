@@ -29,7 +29,20 @@ def carregar_dados_cnj(limite=100):
         st.error(f"Erro ao acessar a API do CNJ: {e}")
         return pd.DataFrame()
 
-df = carregar_dados()
+st.sidebar.markdown("---")
+usar_api = st.sidebar.checkbox("Usar dados reais do CNJ (DataJud API)", value=False)
+
+if usar_api:
+    st.info("🔄 Carregando dados diretamente do CNJ...")
+    df_cnj = carregar_dados_cnj()
+    if not df_cnj.empty:
+        st.success(f"✅ {len(df_cnj)} processos carregados do CNJ!")
+        st.dataframe(df_cnj.head(10))
+        df = df_cnj
+    else:
+        st.warning("⚠️ Não foi possível carregar dados do CNJ. Usando base local.")
+else:
+    df = carregar_dados()
 
 st.sidebar.header("Parâmetros")
 classe_sel = st.sidebar.selectbox("Classe Processual", sorted(df["classe"].unique()))
@@ -62,6 +75,10 @@ with st.sidebar.expander("Consulta opcional de CNPJ"):
             st.info("Informe um CNPJ para consultar.")
 
 filtro = df[(df["classe"] == classe_sel) & (df["instancia"] == instancia_sel)].copy()
+if "classe.nome" in df.columns:
+    st.subheader("📊 Dados reais — processos do CNJ")
+    st.dataframe(df[["numero", "orgaoJulgador.nome", "classe.nome", "assunto.nome"]].head(10))
+    st.stop() 
 if filtro.empty:
     st.warning("Sem dados para esse filtro (classe/instância). Ajuste os parâmetros na barra lateral.")
     st.stop()
@@ -116,7 +133,7 @@ if st.button("🔍 Consultar classes processuais do CNJ"):
                 if resultados:
                     df_classes = pd.DataFrame(resultados)
                     st.success(f"✅ {len(df_classes)} classes encontradas!")
-                    st.dataframe(df_classes.head(10))  # mostra as 10 primeiras
+                    st.dataframe(df_classes.head(10))
                 else:
                     st.warning("Nenhum resultado retornado pela API.")
             else:
