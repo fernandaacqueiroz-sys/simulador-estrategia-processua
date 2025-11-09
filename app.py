@@ -82,8 +82,6 @@ def buscar_e_processar_dados_cnj():
             return pd.DataFrame()
         
         # --- Simulação de Variáveis Analíticas (CRUCIAL PARA O SIMULADOR) ---
-        # A API não fornece "Estratégia Escolhida" ou "Resultado Final" de forma analítica,
-        # então usamos a Classe Processual para SIMULAR as métricas necessárias para o Simulador
         
         def simular_estrategia(classe):
             """Simula a estratégia e o resultado com base na Classe Processual."""
@@ -150,12 +148,15 @@ def calcular_estatisticas(df):
     stats = df.groupby('Estrategia_Escolhid').agg(
         Taxa_Sucesso=('Resultado', 'mean'),
         Tempo_Medio=('Tempo_dias', 'mean'),
-        Impacto_Medio_R$=('Impacto_R$', 'mean'),
+        # CORREÇÃO: Removido o '$' do nome do argumento para evitar SyntaxError
+        Impacto_Medio_RS=('Impacto_R$', 'mean'), 
         Total_Casos=('Impacto_R$', 'size')
     ).reset_index()
 
     # Formata resultados
     stats['Taxa_Sucesso'] = stats['Taxa_Sucesso'] * 100
+    # O Impacto médio será renomeado aqui para R$ para exibição
+    stats.rename(columns={'Impacto_Medio_RS': 'Impacto_Medio_R$'}, inplace=True)
     stats['Impacto_Medio_R$'] = stats['Impacto_Medio_R$'].round(2)
     stats['Tempo_Medio'] = stats['Tempo_Medio'].round(0).astype(int)
 
@@ -171,7 +172,11 @@ def calcular_estatisticas(df):
     return stats, reg_model
 
 # Gera as estatísticas base
-df_stats, reg_model = calcular_estatisticas(df_processos)
+try:
+    df_stats, reg_model = calcular_estatisticas(df_processos)
+except Exception as e:
+    st.error(f"❌ Erro ao calcular estatísticas (média/regressão). Detalhes: {e}")
+    st.stop()
 
 
 # --- LAYOUT DO SIMULADOR ---
@@ -247,7 +252,12 @@ with tab1:
     
     # 1. Métrica de Tempo (Baseado no Valor da Causa usando Regressão)
     # Prevê o tempo para o valor_causa inserido, usando o modelo de regressão
-    tempo_estimado_reg = reg_model.predict(np.array([[valor_causa]]))[0]
+    # Evita erro se o valor for muito fora do range dos dados de treino
+    try:
+        tempo_estimado_reg = reg_model.predict(np.array([[valor_causa]]))[0]
+    except:
+        tempo_estimado_reg = df_foco['Tempo_Medio'] # Fallback para o tempo médio
+        
     tempo_medio_base = df_foco['Tempo_Medio']
     
     # Calcula a diferença para o Delta do st.metric
