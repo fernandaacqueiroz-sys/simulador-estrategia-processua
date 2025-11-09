@@ -1,331 +1,359 @@
 import streamlit as st
 import pandas as pd
 import requests
-import json
-import io
-import matplotlib.pyplot as plt
 import numpy as np
+import plotly.express as px
+import io
+import time
+from sklearn.linear_model import LinearRegression
 
-# --- 1. Configuração da Página, URL da API CNJ/STJ e Autenticação ---
-st.set_page_config(
-    page_title="Simulador de Estratégia Processual",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+# --- Configuração Básica do Streamlit ---
+st.set_page_config(layout="wide", page_title="Simulador de Estratégia Processual (STJ)", page_icon="⚖️")
 
-# Endpoint da API (ElasticSearch)
+# --- Variáveis da API CNJ/STJ ---
+# Endpoint específico do STJ para busca
 API_URL = "https://api-publica.datajud.cnj.jus.br/api_publica_stj/_search"
+
+# Chave de Autenticação (Chave Pública)
 API_KEY = "cDZHYzlZa0JadVREZDJCendQbXY6SkJlTzNjLV9TRENyQk1RdnFKZGRQdw=="
 
+# Cabeçalhos da Requisição com Autenticação
 HEADERS = {
-    "Content-Type": "application/json",
-    "Authorization": f"APIKey {API_KEY}"
+    "Authorization": f"APIKey {API_KEY}",
+    "Content-Type": "application/json"
 }
 
-# Payload JSON para Busca FOCADA (NOVO: Força a API a buscar classes relevantes)
-# Buscamos por classes que contenham os termos 'Recurso', 'Embargos' ou 'Agravo' 
-# para garantir que teremos dados para as estratégias 'Recorrer' e 'Negociar'.
+# Consulta JSON Genérica (match_all) para garantir resultados e evitar erro de 0 hits
 QUERY_JSON = {
-    "size": 50,
+    "size": 50,  # Busca 50 documentos para a amostra
     "query": {
-        "query_string": {
-            "query": "Recurso OR Embargos OR Agravo",
-            "fields": ["classeProcessual.nome"]
-        }
+        "match_all": {}
     },
-    "_source": ["classeProcessual.nome", "valorDaCausa", "dataAjuizamento", "assunto", "tribunal.nome"]
+    # Campos que queremos extrair:
+    "_source": ["classeProcessual.nome", "valorDaCausa", "dataAjuizamento", "assunto", "tribunal.nome", "tempoDeTramitacao"]
 }
 
-# --- 2. Função de Busca e Processamento (API POST Request) ---
-@st.cache_data(ttl=3600)
+
+@st.cache_data(ttl=3600)  # Cache de 1 hora para evitar chamadas excessivas à API
 def buscar_e_processar_dados_cnj():
-    """Realiza a requisição POST AUTENTICADA à API do CNJ e processa o JSON retornado."""
-    st.sidebar.info("🌐 Status da Conexão: Acessando API Pública do CNJ/STJ...")
+    """Busca dados da API do CNJ/STJ e os processa para simulação."""
+    st.info("Buscando dados no DataJud (STJ) via API... (Cache de 1h)")
     
     try:
-        response = requests.post(API_URL, headers=HEADERS, data=json.dumps(QUERY_JSON), timeout=30)
-        response.raise_for_status()
-        data_json = response.json()
+        # Faz a requisição POST autenticada
+        response = requests.post(API_URL, headers=HEADERS, json=QUERY_JSON, timeout=10)
+        response.raise_for_status() # Lança exceção para códigos de erro (4xx ou 5xx)
         
-        if not 'hits' in data_json or not data_json['hits']['hits']:
-            st.warning("API CNJ retornou 0 resultados (Hits). Verifique a consulta JSON.")
+        data = response.json()
+        
+        # Verifica se há resultados
+        hits = data.get('hits', {}).get('hits', [])
+        if not hits:
+            st.error("API CNJ retornou 0 resultados (Hits). A consulta JSON está muito restritiva ou o índice está vazio.")
             return pd.DataFrame()
 
-        lista_processos = []
-        for hit in data_json['hits']['hits']:
-            source = hit['_source']
+        # Extrai os campos relevantes dos hits
+        processos = []
+        for hit in hits:
+            source = hit.get('_source', {})
             
-            # Extrai e limpa a classe. Se o nome vier None/vazio, padronizamos para 'Caso Genérico'
-            classe = source.get('classeProcessual', {}).get('nome', 'Caso Genérico')
-            if not classe:
-                 classe = 'Caso Genérico'
-            
+            # Garante que os campos existem, usando N/A ou 0 como fallback
+            classe = source.get('classeProcessual', {}).get('nome', 'N/A').split(':')[0].strip()
             valor = source.get('valorDaCausa', 0)
             
-            # --- SIMULAÇÃO DE DADOS ANALÍTICOS (Lógica de Simulação Aprimorada) ---
+            # Tenta extrair o tempo de tramitação em dias (ou usa um valor default)
+            tempo_raw = source.get('tempoDeTramitacao', {})
+            tempo_dias = tempo_raw.get('dias', np.random.randint(100, 1500)) if tempo_raw else np.random.randint(100, 1500)
+            
+            processos.append({
+                'Classe_Processual': classe,
+                'Valor_Causa_R$': valor,
+                'Tempo_dias': tempo_dias
+            })
+
+        df = pd.DataFrame(processos)
+        
+        # Filtra valores da causa não numéricos ou muito baixos
+        df['Valor_Causa_R$'] = pd.to_numeric(df['Valor_Causa_R$'], errors='coerce').fillna(0)
+        df = df[df['Valor_Causa_R$'] > 100].copy() # Limpa valores nulos ou muito baixos
+
+        if df.empty:
+            st.warning("Após o processamento dos dados, o DataFrame está vazio. Recarregue ou tente novamente.")
+            return pd.DataFrame()
+        
+        # --- Simulação de Variáveis Analíticas (CRUCIAL PARA O SIMULADOR) ---
+        # A API não fornece "Estratégia Escolhida" ou "Resultado Final" de forma analítica,
+        # então usamos a Classe Processual para SIMULAR as métricas necessárias para o Simulador
+        
+        def simular_estrategia(classe):
+            """Simula a estratégia e o resultado com base na Classe Processual."""
             classe_lower = classe.lower()
             
-            if 'recurso especial' in classe_lower or 'agravo' in classe_lower:
-                estrategia = 'Recorrer'
-                # Simula um resultado mais difícil (40% sucesso) e longo
-                resultado = 1 if valor > 100000 and np.random.rand() < 0.4 else 0
-                tempo = np.random.randint(500, 1500) 
-            elif 'embargos' in classe_lower:
-                estrategia = 'Negociar'
-                # Simula maior probabilidade de acordo/negociação (70% sucesso)
-                resultado = 1 if np.random.rand() < 0.7 else 0
-                tempo = np.random.randint(100, 400)
+            # Se for um recurso, a estratégia mais provável foi Recorrer
+            if 'recurso' in classe_lower or 'agravo' in classe_lower:
+                return 'Recorrer'
+            # Se for um instrumento de negociação/conflito resolvido, simula Negociar
+            elif 'embargos' in classe_lower or 'conflito' in classe_lower:
+                return 'Negociar'
+            # Para classes genéricas ou outras, simula as três estratégias com pesos
             else:
-                # NOVO: Em casos genéricos, distribui as estratégias de forma mais realista
-                default_strategies = ['Negociar', 'Desistir']
-                estrategia = np.random.choice(default_strategies, p=[0.7, 0.3]) 
-                resultado = 1 if 'Negociar' in estrategia and np.random.rand() < 0.6 else 0
-                tempo = np.random.randint(30, 400)
-            
-            custo_rs = np.random.uniform(500, 5000)
-            
-            lista_processos.append({
-                'Classe_Processual': classe,
-                'Estrategia_Escolhid': estrategia,
-                'Resultado': resultado, # 1=Sucesso, 0=Insucesso
-                'Tempo_dias': tempo,
-                'Custo_R$': custo_rs,
-                'Valor_R$': valor
-            })
-            
-        st.sidebar.success(f"✔️ {len(lista_processos)} registros processados para análise.")
-        return pd.DataFrame(lista_processos)
+                return np.random.choice(
+                    ['Recorrer', 'Negociar', 'Desistir'], 
+                    p=[0.35, 0.45, 0.20] # Negociar é ligeiramente mais provável em genéricos
+                )
         
+        # Adiciona a Estratégia Escolhida (usada no filtro)
+        df['Estrategia_Escolhid'] = df['Classe_Processual'].apply(simular_estrategia)
+        
+        # Adiciona o Resultado (Sucesso = 1, Insucesso = 0)
+        # O sucesso é simulado com base no tipo de estratégia para a análise estatística.
+        prob_sucesso = {
+            'Recorrer': 0.55,  # 55% de sucesso ao recorrer
+            'Negociar': 0.75,  # 75% de sucesso em acordos/negociação
+            'Desistir': 0.10   # 10% de "sucesso" (evitar custo/perda total)
+        }
+        
+        df['Resultado'] = df['Estrategia_Escolhid'].apply(
+            lambda x: 1 if np.random.rand() < prob_sucesso.get(x, 0.5) else 0
+        )
+        
+        # Calcula o Ganho/Perda (Impacto Financeiro)
+        # Ganho = Valor Causa * Resultado (sucesso); Perda = -Custo Processual
+        df['Custo_R$'] = df['Valor_Causa_R$'] * np.random.uniform(0.01, 0.05) # Custo entre 1% e 5% do valor
+        df['Impacto_R$'] = np.where(df['Resultado'] == 1, df['Valor_Causa_R$'] - df['Custo_R$'], -df['Custo_R$'])
+        
+        return df
+
     except requests.exceptions.RequestException as e:
-        st.sidebar.error("❌ Falha na conexão com a API CNJ. Dados não disponíveis.")
-        st.error(f"Erro ao conectar ou autenticar: {e}")
+        st.error(f"❌ Erro de conexão ou autenticação com a API CNJ/STJ. Verifique a API Key e a URL. Detalhes: {e}")
         return pd.DataFrame()
     except Exception as e:
-        st.sidebar.error("❌ Erro no processamento dos dados.")
-        st.error(f"Erro: {e}")
+        st.error(f"❌ Erro inesperado durante o processamento dos dados. Detalhes: {e}")
         return pd.DataFrame()
 
-df_processado = buscar_e_processar_dados_cnj()
 
-# --- 3. Estrutura do Layout (Remoção da Aba de Introdução e Consolidação) ---
+# --- Carrega e Prepara os Dados ---
+df_processos = buscar_e_processar_dados_cnj()
 
-# Título Principal e Introdução Consolidada
-st.markdown("<h1 style='text-align: center; color: #1E90FF;'>Simulador de Estratégia Processual 🤖</h1>", unsafe_allow_html=True)
-st.markdown("""
-    <p style='text-align: center; font-size: 1.1em; margin-bottom: 20px;'>
-    Utiliza dados reais (API STJ/DataJud) e análise estatística para comparar 
-    Probabilidade de Êxito, Tempo e Impacto Financeiro das estratégias: <b>Recorrer</b>, 
-    <b>Negociar</b> ou <b>Desistir</b>.
-    </p>
-    """, unsafe_allow_html=True)
-st.markdown("---")
+# Verifica se o DataFrame está vazio e interrompe o script
+if df_processos.empty:
+    st.stop()
 
-# Tabs para organizar o conteúdo
-tab_simulador, tab_instrucoes, tab_dados_brutos = st.tabs(["📈 SIMULAÇÃO E RESULTADOS", "💡 SOBRE E METODOLOGIA", "💾 DADOS BRUTOS DA API"])
 
-# --- 4. Sidebar e Filtros de Entrada do Usuário (dentro da Tab do Simulador) ---
-with tab_simulador:
+# --- Funções de Análise Estatística (Requisitos do Trabalho) ---
+
+def calcular_estatisticas(df):
+    """Calcula as métricas de sucesso, tempo e impacto por estratégia."""
+    # 1. Média Ponderada e Regressão
     
-    if df_processado.empty:
-        st.error("Não foi possível carregar dados da API. Por favor, tente novamente mais tarde.")
-        st.stop()
+    # Média (Probabilidade de Êxito)
+    stats = df.groupby('Estrategia_Escolhid').agg(
+        Taxa_Sucesso=('Resultado', 'mean'),
+        Tempo_Medio=('Tempo_dias', 'mean'),
+        Impacto_Medio_R$=('Impacto_R$', 'mean'),
+        Total_Casos=('Impacto_R$', 'size')
+    ).reset_index()
 
-    st.subheader("1. Defina os Parâmetros do Seu Caso")
+    # Formata resultados
+    stats['Taxa_Sucesso'] = stats['Taxa_Sucesso'] * 100
+    stats['Impacto_Medio_R$'] = stats['Impacto_Medio_R$'].round(2)
+    stats['Tempo_Medio'] = stats['Tempo_Medio'].round(0).astype(int)
+
+    # Regressão Linear Simples (Prevendo Tempo com base no Valor da Causa)
+    # X = Valor da Causa (Variável Independente)
+    # Y = Tempo de Tramitação (Variável Dependente)
+    X = df['Valor_Causa_R$'].values.reshape(-1, 1)
+    y = df['Tempo_dias'].values
+    
+    # Prepara a regressão apenas se tiver dados suficientes (evita erro)
+    reg_model = LinearRegression().fit(X, y)
+    
+    return stats, reg_model
+
+# Gera as estatísticas base
+df_stats, reg_model = calcular_estatisticas(df_processos)
+
+
+# --- LAYOUT DO SIMULADOR ---
+
+st.title("⚖️ Simulador de Estratégia Processual - STJ")
+st.caption("Baseado em dados do DataJud (CNJ) | Desenvolvido para Programação para Advogados.")
+
+tab1, tab2 = st.tabs(["📈 SIMULAÇÃO E RESULTADOS", "💡 SOBRE E METODOLOGIA"])
+
+with tab2:
+    st.header("Metodologia e Funcionamento")
+    st.markdown("""
+    Este simulador utiliza dados reais de processos judiciais do **Superior Tribunal de Justiça (STJ)**, obtidos diretamente através da sua **API Pública** (ElasticSearch) e autenticada com a chave pública do CNJ.
+    """)
+    
+    st.subheader("Análise Estatística (O Algoritmo)")
+    st.markdown("""
+    O sistema processa os dados por meio de análises estatísticas simples (conforme a proposta do trabalho), que incluem:
+    
+    * **Probabilidade de Êxito (Média Ponderada):** Calculada como a média da coluna `Resultado` (onde 1 é Sucesso e 0 é Insucesso) por estratégia.
+    * **Tempo Médio e Desvio:** Calculados com base no campo `Tempo_dias` (simulado/estimado) dos processos para cada estratégia.
+    * **Regressão Linear:** Um modelo de Regressão Linear é utilizado para estimar a correlação entre o **Valor da Causa** (real) e o **Tempo de Tramitação** (simulado), permitindo uma projeção de duração.
+    """)
+    st.subheader("Chave API e Fonte")
+    st.code(f"Endpoint: {API_URL}\nAPI Key (Pública): {API_KEY}", language="python")
+    st.dataframe(df_processos.head(), use_container_width=True)
+
+
+with tab1:
+    st.header("Defina os Parâmetros do Seu Caso")
+    
+    # Sidebar de Input
     
     col_input_1, col_input_2, col_input_3 = st.columns(3)
-
-    # Garante que as opções de classe processual sejam únicas e não vazias
-    classes_disponiveis = [c for c in df_processado['Classe_Processual'].unique() if c and c != 'N/A']
-    if 'Caso Genérico' not in classes_disponiveis: classes_disponiveis.append('Caso Genérico') # Adiciona fallback
     
     with col_input_1:
-        classe_selecionada = st.selectbox(
-            "Classe Processual (Dados da API):",
-            classes_disponiveis,
-            index=classes_disponiveis.index('Caso Genérico') if 'Caso Genérico' in classes_disponiveis else 0,
-            help="Selecione a Classe Processual que melhor representa o seu caso. A amostra é extraída da API do STJ."
+        # Filtro de Classe (Baseado nos dados reais)
+        classes_disponiveis = df_processos['Classe_Processual'].unique()
+        classe_escolhida = st.selectbox(
+            "Classe Processual (Dados Reais do STJ)",
+            options=classes_disponiveis,
+            index=0,
+            help="Selecione a Classe Processual mais próxima do seu caso. As opções são extraídas da amostra da API."
         )
 
-    df_filtrado = df_processado[df_processado['Classe_Processual'] == classe_selecionada]
-
-    # Garante que as opções de estratégia sejam únicas
-    estrategias_disponiveis = df_processado['Estrategia_Escolhid'].unique()
-    
     with col_input_2:
-        valor_causa = st.number_input(
-            "Valor da Causa (R$):",
-            min_value=1000.00,
-            max_value=10000000.00,
-            value=df_filtrado['Valor_R$'].mean() if not df_filtrado.empty and df_filtrado['Valor_R$'].sum() > 0 else 50000.00,
-            step=1000.00,
-            format="%.2f",
-            help="O valor é utilizado no cálculo do Impacto Financeiro Esperado (Média Ponderada)."
+        # Filtro de Estratégia (Baseado na simulação)
+        estrategias_disponiveis = df_stats['Estrategia_Escolhid'].unique()
+        estrategia_foco = st.selectbox(
+            "Estratégia de Foco",
+            options=estrategias_disponiveis,
+            index=estrategias_disponiveis.tolist().index('Negociar') if 'Negociar' in estrategias_disponiveis else 0,
+            help="Selecione a estratégia cuja viabilidade você quer analisar para esta Classe Processual."
         )
 
     with col_input_3:
-        estrategia_desejada = st.selectbox(
-            "Estratégia Foco:",
-            estrategias_disponiveis,
-            help="Selecione uma estratégia para ser destacada nos gráficos de comparação."
+        # Input de Valor da Causa
+        valor_causa = st.number_input(
+            "Valor da Causa (R$)",
+            min_value=1000.0,
+            max_value=10000000.0,
+            value=25000.0,
+            step=1000.0,
+            format="%.2f",
+            help="Insira o valor econômico da demanda para calcular o Impacto Financeiro Esperado."
         )
-    
+        
     st.markdown("---")
     
-    st.subheader(f"2. Análise Preditiva para: {classe_selecionada}")
+    # --- FILTRAGEM E RESULTADOS PARA ESTRATÉGIA DE FOCO ---
     
-    # Algoritmo de Análise Estatística Simples (Média Ponderada/Regressão)
-    if df_filtrado.empty or len(df_filtrado) < 2:
-        st.warning(f"Não há dados suficientes na amostra da API para a classe '{classe_selecionada}'.")
-        st.stop()
-
-    analise_estatistica = df_filtrado.groupby('Estrategia_Escolhid').agg(
-        Probabilidade_Exito=('Resultado', 'mean'), 
-        Tempo_Medio_dias=('Tempo_dias', 'mean'), 
-        Custo_Medio=('Custo_R$', 'mean') 
-    ).reset_index()
-
-    # Média Ponderada
-    analise_estatistica['Impacto_Esperado_R$'] = (
-        valor_causa * analise_estatistica['Probabilidade_Exito']
-    ) - analise_estatistica['Custo_Medio']
-
-    # Regressão Simples
-    def calcular_regressao_simples(df_estrat, valor_causa_input):
-        if len(df_estrat) < 2: return df_estrat['Tempo_dias'].mean() if not df_estrat.empty else 0
-        X = df_estrat['Valor_R$'].replace([np.inf, -np.inf], np.nan).dropna()
-        Y = df_estrat.loc[X.index, 'Tempo_dias']
-        if len(X) < 2: return Y.mean() if not Y.empty else 0
-        A = np.vstack([X, np.ones(len(X))]).T
-        try:
-            m, c = np.linalg.lstsq(A, Y, rcond=None)[0]
-        except np.linalg.LinAlgError:
-            return Y.mean()
-        tempo_previsto = m * valor_causa_input + c
-        return max(1, tempo_previsto) 
-
-    analise_estatistica['Tempo_Regressao_dias'] = analise_estatistica.apply(
-        lambda row: calcular_regressao_simples(
-            df_filtrado[df_filtrado['Estrategia_Escolhid'] == row['Estrategia_Escolhid']],
-            valor_causa
-        ), axis=1
-    )
+    df_foco = df_stats[df_stats['Estrategia_Escolhid'] == estrategia_foco].iloc[0]
     
-    # Exibição de Métricas (Destaque para a Estratégia Foco)
-    st.markdown("#### 🔑 Resumo da Estratégia Selecionada")
-    analise_estrategia = analise_estatistica[analise_estatistica['Estrategia_Escolhid'] == estrategia_desejada].iloc[0]
+    # 1. Métrica de Tempo (Baseado no Valor da Causa usando Regressão)
+    # Prevê o tempo para o valor_causa inserido, usando o modelo de regressão
+    tempo_estimado_reg = reg_model.predict(np.array([[valor_causa]]))[0]
+    tempo_medio_base = df_foco['Tempo_Medio']
     
+    # Calcula a diferença para o Delta do st.metric
+    delta_tempo = (tempo_estimado_reg - df_foco['Tempo_Medio']) / df_foco['Tempo_Medio'] * 100
+    
+    st.subheader(f"📊 Resultados Estimados para a Estratégia: {estrategia_foco}")
+
     col_metric_1, col_metric_2, col_metric_3 = st.columns(3)
-    
+
     with col_metric_1:
         st.metric(
-            label=f"Probabilidade de Êxito ({estrategia_desejada})",
-            value=f"{analise_estrategia['Probabilidade_Exito'] * 100:.1f}%",
-            delta_color="normal"
+            label="Probabilidade de Êxito",
+            value=f"{df_foco['Taxa_Sucesso']:.1f}%",
+            delta=f"Baseado em {df_foco['Total_Casos']} casos"
         )
+
     with col_metric_2:
-        melhor_impacto = analise_estatistica['Impacto_Esperado_R$'].max()
-        delta_impacto = analise_estrategia['Impacto_Esperado_R$'] - analise_estatistica['Impacto_Esperado_R$'].mean()
-        
+        # Exibe o impacto financeiro (Média Ponderada)
         st.metric(
-            label=f"Impacto Financeiro Esperado",
-            value=f"R$ {analise_estrategia['Impacto_Esperado_R$']:,.2f}",
-            delta=f"Dif. Média: R$ {delta_impacto:,.2f}",
-            delta_color="normal"
+            label="Impacto Financeiro Esperado (Média)",
+            value=f"R$ {df_foco['Impacto_Medio_R$']:,.2f}",
+            delta_color="off",
+            help="Média Ponderada do impacto (Ganho - Custo) para essa estratégia."
         )
+
     with col_metric_3:
-        melhor_tempo = analise_estatistica['Tempo_Regressao_dias'].min()
-        delta_tempo = melhor_tempo - analise_estrategia['Tempo_Regressao_dias']
-        
         st.metric(
-            label=f"Tempo Previsto (Regressão)",
-            value=f"{analise_estrategia['Tempo_Regressao_dias']:.0f} dias",
-            delta=f"Dif. Mínimo: {delta_tempo:.0f} dias",
-            delta_color="inverse" if delta_tempo < 0 else "normal"
+            label="Tempo de Tramitação Estimado",
+            value=f"{tempo_estimado_reg:.0f} dias",
+            delta=f"{delta_tempo:.1f}% vs. Média da Base ({tempo_medio_base} dias)",
+            delta_color="inverse" if delta_tempo > 0 else "normal",
+            help="Estimativa baseada em Regressão Linear, considerando o Valor da Causa informado."
         )
         
     st.markdown("---")
     
-    # Visualizações (Gráficos)
-    st.subheader("3. Comparação Visual e Relatório Detalhado")
+    # --- GRÁFICOS INTERATIVOS PLOTLY ---
     
-    col_grafico_1, col_grafico_2 = st.columns([1, 1.5]) 
-
+    st.subheader("Comparativo de Estratégias (Dashboard Interativo)")
+    
+    col_grafico_1, col_grafico_2 = st.columns(2)
+    
+    # 1. Gráfico de Barras: Taxa de Sucesso (Comparação de Estratégias)
     with col_grafico_1:
-        st.markdown("#### 🏆 Taxa de Sucesso por Estratégia")
-        fig1, ax1 = plt.subplots(figsize=(8, 4))
-        
-        prob_percent = analise_estatistica['Probabilidade_Exito'] * 100
-        estrategias = analise_estatistica['Estrategia_Escolhid']
-        
-        cores = ['#1E90FF' if e != estrategia_desejada else '#FFA500' for e in estrategias] 
-        
-        ax1.bar(estrategias, prob_percent, color=cores)
-        ax1.set_ylabel("Probabilidade de Êxito (%)")
-        ax1.set_title("Comparativo de Taxa de Sucesso")
-        ax1.tick_params(axis='x', rotation=0)
-        st.pyplot(fig1)
+        st.markdown("##### 📈 Taxa de Sucesso por Estratégia")
+        fig_sucesso = px.bar(
+            df_stats, 
+            x='Estrategia_Escolhid', 
+            y='Taxa_Sucesso',
+            color='Estrategia_Escolhid',
+            labels={'Estrategia_Escolhid': 'Estratégia', 'Taxa_Sucesso': 'Sucesso (%)'},
+            title='Comparação de Probabilidade de Ganho/Resultado Positivo',
+            color_discrete_map={
+                estrategia_foco: '#1E90FF', # Destaque a estratégia de foco em azul
+                'Recorrer': '#FF4B4B', 
+                'Negociar': '#3CB371', 
+                'Desistir': '#696969'
+            }
+        )
+        fig_sucesso.update_layout(xaxis_title="", yaxis_range=[0, 100])
+        st.plotly_chart(fig_sucesso, use_container_width=True)
 
+    # 2. Gráfico de Pizza: Distribuição de Impacto Financeiro (Média Ponderada)
     with col_grafico_2:
-        st.markdown("#### 💰 Distribuição do Impacto Financeiro Esperado")
-        df_vantajoso = analise_estatistica[analise_estatistica['Impacto_Esperado_R$'] > 0]
+        st.markdown("##### 💰 Distribuição do Impacto Financeiro Médio")
+        fig_impacto = px.pie(
+            df_stats, 
+            names='Estrategia_Escolhid', 
+            values='Impacto_Medio_R$',
+            title='Impacto Médio (Ganho Líquido) por Estratégia',
+            color_discrete_sequence=['#1E90FF', '#3CB371', '#FF4B4B', '#696969'],
+            hover_data=['Tempo_Medio'],
+        )
+        fig_impacto.update_traces(textinfo='percent+label')
+        st.plotly_chart(fig_impacto, use_container_width=True)
 
-        if not df_vantajoso.empty:
-            fig3, ax3 = plt.subplots(figsize=(7, 7))
-            
-            cores_pizza = ['#20B2AA', '#87CEEB', '#FF6347'] 
-            
-            ax3.pie(
-                df_vantajoso['Impacto_Esperado_R$'],
-                labels=df_vantajoso['Estrategia_Escolhid'],
-                autopct='%1.1f%%',
-                startangle=90,
-                wedgeprops={'edgecolor': 'white'},
-                colors=cores_pizza
-            )
-            ax3.set_title("Estratégias Mais Vantajosas (Baseado no Impacto)")
-            st.pyplot(fig3)
-        else:
-            st.info("Nenhuma estratégia resultou em Impacto Financeiro Esperado positivo nesta simulação.")
-    
-    # Relatório Detalhado
-    st.markdown("#### 📋 Tabela de Comparação Completa")
-    st.dataframe(
-        analise_estatistica.rename(columns={
-            'Probabilidade_Exito': 'Probabilidade de Êxito (0-1)',
-            'Tempo_Medio_dias': 'Tempo Médio (Amostra)',
-            'Custo_Medio': 'Custo Médio (R$)',
-            'Impacto_Esperado_R$': f'Impacto Esperado (R$ {valor_causa:,.2f})',
-            'Tempo_Regressao_dias': 'Tempo Previsto (Regressão)'
-        }).set_index('Estrategia_Escolhid').style.format({
-            'Probabilidade de Êxito (0-1)': '{:.2f}',
-            'Custo Médio (R$)': 'R$ {:,.2f}',
-            f'Impacto Esperado (R$ {valor_causa:,.2f})': 'R$ {:,.2f}',
-            'Tempo Médio (Amostra)': '{:.0f} dias',
-            'Tempo Previsto (Regressão)': '{:.0f} dias'
-        })
-    )
-
-# --- 5. Abas de Instrução e Dados Brutos ---
-
-with tab_instrucoes:
-    st.header("💡 Sobre a Metodologia")
-    st.markdown("""
-        Este simulador combina dados reais (Classe Processual e Valor da Causa) da API do STJ/DataJud com uma análise estatística simulada para projeção de resultados.
-        
-        #### Como a Simulação Funciona:
-        1.  **Fonte de Dados:** A Classe Processual e o Valor da Causa são extraídos em tempo real da **API Pública do STJ**.
-        2.  **Mapeamento de Estratégias:** Como a API não informa a estratégia, mapeamos classes típicas de recursos (`Recurso Especial`, `Agravo`) para a estratégia **Recorrer**, e classes de petições mais simples ou iniciais para **Negociar** ou **Desistir**.
-        3.  **Média Ponderada:** O **Impacto Financeiro Esperado** é calculado pela fórmula da Média Ponderada: `(Valor da Causa × Probabilidade de Êxito) - Custo Médio`.
-        4.  **Regressão:** A **Previsão de Tempo de Tramitação** é feita com um modelo de **Regressão Linear Simples** (*least squares* do NumPy) que relaciona o **Valor da Causa** com o **Tempo Médio de Dias** de cada estratégia na amostra.
-        """)
+    # --- Relatório Final (Requisito PDF) ---
     st.markdown("---")
-    st.caption("Desenvolvido para a disciplina de Programação para Advogados - 2º Período.")
-
-with tab_dados_brutos:
-    st.header("💾 Amostra de Dados Brutos da API CNJ/STJ")
-    st.info("Esta tabela mostra os processos brutos (limitados a 50) retornados pela API APÓS nosso filtro. Utilize-a para verificar a qualidade da amostra.")
-    if not df_processado.empty:
-        st.dataframe(df_processado)
-    else:
-        st.warning("Nenhum dado bruto foi carregado da API.")
+    st.subheader("📑 Resumo do Relatório (Simulação Final)")
+    
+    relatorio_texto = f"""
+    ## Relatório de Simulação Processual - CNJ/STJ
+    
+    **Classe Processual Analisada:** {classe_escolhida}
+    **Valor da Causa Informado:** R$ {valor_causa:,.2f}
+    
+    ---
+    
+    ### Estratégia de Foco: {estrategia_foco}
+    
+    Com base em nossa análise estatística da amostra do STJ e no seu valor de causa:
+    
+    * **Probabilidade de Êxito:** {df_foco['Taxa_Sucesso']:.1f}% (Chance de resultado positivo/ganho).
+    * **Impacto Financeiro Esperado:** R$ {df_foco['Impacto_Medio_R$']:,.2f} (Considerando ganho menos custos).
+    * **Tempo Estimado:** Aproximadamente {tempo_estimado_reg:.0f} dias.
+    
+    ### Comparativo Completo
+    
+    {df_stats.to_markdown(index=False)}
+    
+    ---
+    
+    *Este relatório é uma simulação baseada em dados históricos e modelos estatísticos. Não substitui a análise jurídica profissional.*
+    """
+    
+    # Exibe o resumo do relatório em um expander para fácil leitura/cópia
+    with st.expander("Clique para visualizar e copiar o Relatório Completo", expanded=False):
+        st.code(relatorio_texto, language='markdown')
 
