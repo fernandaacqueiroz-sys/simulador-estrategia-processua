@@ -21,7 +21,7 @@ def carregar_dados_cnj(limite=100):
     Busca dados reais de processos do CNJ (DataJud API),
     autenticando com a chave pública do CNJ.
     """
-    url = f"https://api-publica.datajud.cnj.jus.br/api_publica_teste/processos?limit={limite}"
+    url = f"https://api-publica.datajud.cnj.jus.br/api_publica/proc/json?limit={limite}"
     headers = {
         "Authorization": "APIKey cDZHYzlZa0JadVREZDJCendQbXY6SkJlTzNjLV9TRENyQk1RdnFKZGRQdw=="
     }
