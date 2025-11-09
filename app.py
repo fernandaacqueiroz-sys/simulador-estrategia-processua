@@ -9,12 +9,25 @@ st.title("⚖️ Simulador de Estratégia Processual")
 st.write("Analise estratégias com base em dados (simulados) e visualize risco × ganho esperado.")
 
 @st.cache_data
-def carregar_dados():
-    df = pd.read_csv("data/processos.csv")
-    df["valor_causa"] = pd.to_numeric(df["valor_causa"], errors="coerce")
-    df["tempo_medio"] = pd.to_numeric(df["tempo_medio"], errors="coerce")
-    df["taxa_sucesso"] = pd.to_numeric(df["taxa_sucesso"], errors="coerce")
-    return df.dropna(subset=["valor_causa", "tempo_medio", "taxa_sucesso"])
+def carregar_dados_cnj(limite=100):
+    """
+    Carrega dados reais de processos diretamente do CNJ (DataJud API).
+    O parâmetro 'limite' controla quantos processos serão trazidos (máx. 100 por página).
+    """
+    url = f"https://api-publica.datajud.cnj.jus.br/api_publica_teste/processos?limit={limite}"
+    try:
+        resposta = requests.get(url, timeout=30)
+        resposta.raise_for_status()
+        dados = resposta.json()
+        resultados = dados.get("results", [])
+        if not resultados:
+            st.warning("Nenhum processo encontrado na API do CNJ.")
+            return pd.DataFrame()
+        df = pd.json_normalize(resultados)
+        return df
+    except Exception as e:
+        st.error(f"Erro ao acessar a API do CNJ: {e}")
+        return pd.DataFrame()
 
 df = carregar_dados()
 
