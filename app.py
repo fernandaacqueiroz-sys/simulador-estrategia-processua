@@ -210,7 +210,6 @@ def main():
         fonte_dados = "DADOS SIMULADOS (Fallback)"
 
     # --- LAYOUT EM TABS ---
-    # ESSA LINHA PRECISA ESTAR AQUI FORA DOS BLOCOS WITH!
     tab_simulador, tab_metodologia = st.tabs(["📈 SIMULAÇÃO E RESULTADOS", "💡 SOBRE E METODOLOGIA"]) 
 
     with tab_simulador:
@@ -248,28 +247,43 @@ def main():
         # 2. FILTRAGEM E CÁLCULO DE ESTATÍSTICAS (O Algoritmo)
         df_filtrado = df_final[df_final['Classe_Processual'] == classe_selecionada]
         
-        # Filtro da Estratégia Focada para Métricas
-        df_foco = df_filtrado[df_filtrado['Estrategia_Escolhid'] == estrategia_foco]
-        
         # DataFrame com estatísticas agrupadas para comparação
         df_stats_comparacao = calcular_estatisticas(df_filtrado)
         
-        # Extrai as métricas de foco
-        if not df_foco.empty:
-            taxa_sucesso_foco = df_foco['Resultado'].mean() * 100
-            impacto_medio_foco = df_foco['Impacto_R$'].mean()
-            tempo_medio_foco = df_foco['Tempo_dias'].mean()
-        else:
-            # Fallback seguro para as métricas se o filtro for muito restrito
-            taxa_sucesso_foco, impacto_medio_foco, tempo_medio_foco = 0, 0, 0
-        
-        # Calcula delta (comparação com a média geral)
+        # --- BUSCA AS MÉTRICAS HISTÓRICAS DA ESTRATÉGIA SELECIONADA ---
+        try:
+            # Encontra a linha da estatística da estratégia de foco
+            stats_foco = df_stats_comparacao[df_stats_comparacao['Estrategia_Escolhid'] == estrategia_foco].iloc[0]
+            
+            # Converte a Taxa de Sucesso (string formatada com %) para float
+            taxa_sucesso_float = float(stats_foco['Probabilidade de Êxito'].replace('%', '').replace(',', '.')) / 100
+            
+            tempo_medio_foco = float(stats_foco['Tempo Médio'].replace(' dias', '').replace('.', '').replace(',', '.'))
+            
+            # Calcula o Impacto Projetado (MÉDIA PONDERADA REAL)
+            # Ganho Projetado = (Valor_Causa * Taxa_Sucesso) - (Valor_Causa * Custo da Estratégia)
+            if estrategia_foco == 'Recorrer':
+                custo_estrategia = 0.05
+            elif estrategia_foco == 'Negociar':
+                custo_estrategia = 0.02
+            else: # Desistir
+                custo_estrategia = 0.01
+
+            impacto_projetado_foco = (valor_causa * taxa_sucesso_float) - (valor_causa * custo_estrategia)
+            
+        except IndexError:
+            # Caso não haja dados para a estratégia na amostra filtrada
+            taxa_sucesso_float = 0
+            impacto_projetado_foco = 0
+            tempo_medio_foco = 0
+
+        # Calcula delta (comparação com a média geral de TODAS as estratégias)
         media_sucesso_geral = df_filtrado['Resultado'].mean() * 100
         media_impacto_geral = df_filtrado['Impacto_R$'].mean()
         media_tempo_geral = df_filtrado['Tempo_dias'].mean()
         
-        delta_sucesso = (taxa_sucesso_foco - media_sucesso_geral)
-        delta_impacto = (impacto_medio_foco - media_impacto_geral)
+        delta_sucesso = (taxa_sucesso_float * 100) - media_sucesso_geral
+        delta_impacto = (impacto_projetado_foco - media_impacto_geral)
         delta_tempo = (tempo_medio_foco - media_tempo_geral)
 
         # --- EXIBIÇÃO DE MÉTRICAS (Média Ponderada e Probabilidade) ---
@@ -280,7 +294,7 @@ def main():
         with col_metrica_1:
             st.metric(
                 label="Probabilidade de Êxito",
-                value=f"{taxa_sucesso_foco:.1f}%",
+                value=f"{taxa_sucesso_float * 100:.1f}%",
                 delta=f"{delta_sucesso:.1f}% vs. Média" if media_sucesso_geral else None,
                 help="Taxa de sucesso histórica para esta estratégia e classe processual."
             )
@@ -288,9 +302,10 @@ def main():
         with col_metrica_2:
             st.metric(
                 label="Impacto Financeiro Esperado (Média Ponderada)",
-                value=f"R$ {impacto_medio_foco:,.2f}".replace(',', '_').replace('.', ',').replace('_', '.'),
+                # EXIBE O VALOR PROJETADO COM O INPUT DO USUÁRIO
+                value=f"R$ {impacto_projetado_foco:,.2f}".replace(',', '_').replace('.', ',').replace('_', '.'),
                 delta=f"R$ {delta_impacto:,.2f} vs. Média" if media_impacto_geral else None,
-                help="Ganho líquido esperado, ponderado pela probabilidade de sucesso e dedução de custos."
+                help="Ganho líquido esperado, ponderado pela probabilidade de sucesso e dedução de custos. ESTE VALOR REAGE AO SEU INPUT."
             )
 
         with col_metrica_3:
@@ -298,7 +313,7 @@ def main():
                 label="Tempo Médio de Tramitação",
                 value=f"{tempo_medio_foco:.0f} dias",
                 delta=f"{delta_tempo:.0f} dias vs. Média" if media_tempo_geral else None,
-                help="Estimativa de duração do processo para esta estratégia."
+                help="Estimativa de duração do processo para esta estratégia, baseada na regressão."
             )
         
         st.markdown("---")
@@ -322,7 +337,7 @@ def main():
                 df_plot,
                 x='Estrategia_Escolhid',
                 y='Taxa_Sucesso',
-                title='Probabilidade de Êxito por Estratégia',
+                title='Probabilidade de Êxito por Estratégia (Amostra Histórica)',
                 color='Estrategia_Escolhid',
                 text='Taxa_Sucesso',
                 height=400
@@ -338,7 +353,7 @@ def main():
                 df_plot,
                 names='Estrategia_Escolhid',
                 values='Impacto_Total_Positivo',
-                title='Distribuição do Impacto Financeiro Total',
+                title='Distribuição do Impacto Financeiro Total (Amostra Histórica)',
                 hole=.3,
                 height=400
             )
@@ -392,4 +407,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
