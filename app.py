@@ -2,26 +2,24 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import requests
+from fpdf import FPDF
 
-# ===========================
-# CONFIGURAÇÃO INICIAL
-# ===========================
+# ===============================
+# CONFIGURAÇÃO GERAL
+# ===============================
 st.set_page_config(page_title="Simulador de Estratégia Processual", page_icon="⚖️", layout="wide")
-
 st.title("⚖️ Simulador de Estratégia Processual")
-st.write("Analise estratégias processuais e visualize dados reais do CNJ (DataJud API).")
+st.write("Analise estratégias com base em dados reais do CNJ (DataJud).")
 
-# ===========================
-# FUNÇÕES AUXILIARES
-# ===========================
-
+# ===============================
+# FUNÇÃO: BUSCA DE DADOS REAIS DO CNJ
+# ===============================
 @st.cache_data
-def carregar_dados_cnj(limite=50):
+def carregar_dados_cnj(tribunal="tjrj", limite=50):
     """
-    Consulta dados reais de processos no CNJ (DataJud API)
-    usando método POST com chave pública de autenticação.
+    Busca dados reais do DataJud (CNJ) para um tribunal específico.
     """
-    url = "https://api-publica.datajud.cnj.jus.br/api_publica/proc/json"
+    url = f"https://api-publica.datajud.cnj.jus.br/api_publica_{tribunal}/_search"
     headers = {
         "Authorization": "APIKey cDZHYzlZa0JadVREZDJCendQbXY6SkJlTzNjLV9TRENyQk1RdnFKZGRQdw==",
         "Content-Type": "application/json"
@@ -32,177 +30,125 @@ def carregar_dados_cnj(limite=50):
     }
 
     try:
-        resposta = requests.post(url, headers=headers, json=payload, timeout=60)
-        resposta.raise_for_status()
-        dados = resposta.json()
-
-        if "hits" not in dados or "hits" not in dados["hits"]:
-            st.warning("A resposta do CNJ não contém resultados válidos.")
-            return pd.DataFrame()
-
-        resultados = dados["hits"]["hits"]
+        r = requests.post(url, headers=headers, json=payload, timeout=60)
+        r.raise_for_status()
+        dados = r.json()
+        resultados = dados.get("hits", {}).get("hits", [])
         if not resultados:
-            st.warning("Nenhum processo retornado pela API do CNJ.")
+            st.warning("Nenhum processo retornado pela API.")
             return pd.DataFrame()
 
-        # Normaliza os dados vindos da API (estrutura aninhada)
         df = pd.json_normalize(resultados)
         return df
 
     except Exception as e:
-        st.error(f"Falha ao acessar a API do CNJ: {e}")
+        st.error(f"Erro ao acessar o CNJ: {e}")
         return pd.DataFrame()
 
-@st.cache_data
-def carregar_dados():
-    df = pd.read_csv("data/processos.csv")
-    df["valor_causa"] = pd.to_numeric(df["valor_causa"], errors="coerce")
-    df["tempo_medio"] = pd.to_numeric(df["tempo_medio"], errors="coerce")
-    df["taxa_sucesso"] = pd.to_numeric(df["taxa_sucesso"], errors="coerce")
-    return df.dropna(subset=["valor_causa", "tempo_medio", "taxa_sucesso"])
+# ===============================
+# PARÂMETROS NA BARRA LATERAL
+# ===============================
+st.sidebar.header("⚙️ Parâmetros de Simulação")
 
-# ===========================
-# MENU LATERAL
-# ===========================
-st.sidebar.header("Parâmetros")
-fonte_dados = st.sidebar.radio("Escolha a fonte dos dados:", ["API CNJ (real)", "Base local (CSV)"], index=0)
-limite = st.sidebar.slider("Quantidade de processos a buscar (API CNJ)", 10, 100, 50)
+tribunal = st.sidebar.selectbox(
+    "Tribunal (alias)",
+    ["tjrj", "tjsp", "tjmg", "tjrs", "stj", "stf"],
+    index=0
+)
+limite = st.sidebar.slider("Quantidade de processos (limite)", 10, 100, 30)
+estrategias = ["Recorrer", "Negociar", "Desistir"]
 
-# ===========================
-# CONSULTA DE CNPJ (opcional)
-# ===========================
-with st.sidebar.expander("🔎 Consulta opcional de CNPJ"):
-    cnpj = st.text_input("Digite um CNPJ (apenas números)", value="")
-    if st.button("Consultar CNPJ"):
-        if cnpj.strip():
-            try:
-                url = f"https://receitaws.com.br/v1/cnpj/{cnpj.strip()}"
-                r = requests.get(url, timeout=15)
-                j = r.json()
-                if "status" in j and j["status"] == "ERROR":
-                    st.warning(j.get("message", "Não encontrado / limite da API."))
-                else:
-                    st.success(f"{j.get('nome','(sem nome)')} — {j.get('fantasia','')}")
-                    atvs = j.get("atividade_principal", [])
-                    if atvs:
-                        st.caption(f"Atividade principal: {atvs[0].get('text','')}")
-                    st.caption(f"UF: {j.get('uf','')}  |  Município: {j.get('municipio','')}")
-            except Exception as e:
-                st.warning(f"Falha na consulta: {e}")
-        else:
-            st.info("Informe um CNPJ para consultar.")
-
-# ===========================
+# ===============================
 # CARREGAMENTO DOS DADOS
-# ===========================
-if fonte_dados == "API CNJ (real)":
-    st.info("🔄 Carregando dados reais da API do CNJ...")
-    df = carregar_dados_cnj(limite)
-    if df.empty:
-        st.stop()
-    st.success(f"✅ {len(df)} processos reais carregados do CNJ.")
-else:
-    df = carregar_dados()
-    st.warning("Usando base local (CSV). Dados simulados.")
-
-# ===========================
-# SEÇÃO: DADOS REAIS DO CNJ
-# ===========================
-if "classe.nome" in df.columns:
-    st.subheader("📊 Processos Reais — Dados do CNJ (DataJud API)")
-    
-    # Seleciona colunas importantes
-    mostrar = df[["numero", "orgaoJulgador.nome", "classe.nome", "assunto.nome", "grau"]].copy()
-    mostrar.rename(columns={
-        "numero": "Número do Processo",
-        "orgaoJulgador.nome": "Órgão Julgador",
-        "classe.nome": "Classe Processual",
-        "assunto.nome": "Assunto Principal",
-        "grau": "Grau de Jurisdição"
-    }, inplace=True)
-
-    # Mostra tabela
-    st.dataframe(mostrar.head(20))
-
-    # --- Gráfico 1: quantidade de processos por classe ---
-    fig1 = px.bar(
-        mostrar.groupby("Classe Processual").size().reset_index(name="Quantidade"),
-        x="Classe Processual", y="Quantidade", color="Classe Processual",
-        title="Quantidade de Processos por Classe Processual"
-    )
-    st.plotly_chart(fig1, use_container_width=True)
-
-    # --- Gráfico 2: distribuição por grau ---
-    fig2 = px.pie(
-        mostrar, names="Grau de Jurisdição", title="Distribuição por Grau de Jurisdição"
-    )
-    st.plotly_chart(fig2, use_container_width=True)
-
-    # --- Gráfico 3: processos por tribunal (órgão julgador) ---
-    fig3 = px.bar(
-        mostrar.groupby("Órgão Julgador").size().reset_index(name="Processos"),
-        x="Órgão Julgador", y="Processos",
-        title="Processos por Tribunal / Órgão Julgador"
-    )
-    st.plotly_chart(fig3, use_container_width=True)
-
-    st.caption("💡 Dados reais consultados via API oficial do CNJ (DataJud).")
+# ===============================
+st.info("🔄 Buscando dados reais do CNJ...")
+df = carregar_dados_cnj(tribunal, limite)
+if df.empty:
     st.stop()
+st.success(f"✅ {len(df)} processos obtidos do {tribunal.upper()}")
 
-# ===========================
-# SEÇÃO: BASE LOCAL (CSV)
-# ===========================
-st.subheader("📁 Dados Locais — Base Simulada")
-classe_sel = st.sidebar.selectbox("Classe Processual", sorted(df["classe"].unique()))
-instancia_sel = st.sidebar.selectbox("Instância", sorted(df["instancia"].unique()))
-valor_input = st.sidebar.number_input(
-    "Valor da causa (R$) — para cálculo do ganho esperado",
-    min_value=1000, step=1000, value=int(df["valor_causa"].median())
-)
-st.sidebar.caption("O valor informado é usado para estimar o ganho esperado na simulação.")
+# ===============================
+# ORGANIZAÇÃO DOS DADOS
+# ===============================
+colunas = [
+    "numero", "classeProcessual.sigla", "assuntoPrincipal.nome",
+    "orgaoJulgador.nome", "dataAjuizamento", "grau"
+]
+df = df[[c for c in colunas if c in df.columns]]
+df.rename(columns={
+    "numero": "Número do Processo",
+    "classeProcessual.sigla": "Classe",
+    "assuntoPrincipal.nome": "Assunto",
+    "orgaoJulgador.nome": "Órgão Julgador",
+    "dataAjuizamento": "Data de Ajuizamento",
+    "grau": "Grau"
+}, inplace=True)
 
-# --- Filtro ---
-filtro = df[(df["classe"] == classe_sel) & (df["instancia"] == instancia_sel)].copy()
-if filtro.empty:
-    st.warning("Sem dados para esse filtro. Ajuste os parâmetros na barra lateral.")
-    st.stop()
+st.subheader("📊 Dados Reais do CNJ")
+st.dataframe(df.head(10))
 
-# --- Cálculos ---
-filtro["risco"] = filtro["tempo_medio"] / (filtro["taxa_sucesso"] * 100)
-filtro["ganho_esperado"] = valor_input * filtro["taxa_sucesso"]
+# ===============================
+# SIMULAÇÃO DE ESTRATÉGIAS
+# ===============================
+st.markdown("---")
+st.subheader("🎯 Simulação de Estratégias Processuais")
 
-# --- Métricas ---
-colm1, colm2, colm3 = st.columns(3)
-colm1.metric("Taxa de sucesso (média)", f"{(filtro['taxa_sucesso'].mean()*100):.1f}%")
-colm2.metric("Tempo médio (dias)", f"{filtro['tempo_medio'].mean():.0f}")
-colm3.metric("Ganho esperado médio (R$)", f"{filtro['ganho_esperado'].mean():,.0f}".replace(",", "."))
+valor_causa = st.number_input("Valor estimado da causa (R$)", min_value=1000, value=50000, step=1000)
 
-# --- Gráficos ---
-st.subheader(f"Resultados — {classe_sel} / {instancia_sel}")
+# Pesos fictícios baseados em lógica realista (poderia ser calibrado com estatísticas)
+parametros = {
+    "Recorrer": {"taxa_sucesso": 0.65, "tempo": 1.5, "custo": 0.10},
+    "Negociar": {"taxa_sucesso": 0.80, "tempo": 0.6, "custo": 0.05},
+    "Desistir": {"taxa_sucesso": 0.0, "tempo": 0.1, "custo": 0.0},
+}
 
-fig1 = px.bar(
-    filtro.groupby("estrategia", as_index=False)["taxa_sucesso"].mean(),
-    x="estrategia", y="taxa_sucesso", color="estrategia",
-    title="Taxa de sucesso por Estratégia (média)",
-    labels={"taxa_sucesso":"Taxa de sucesso"}
-)
-fig1.update_yaxes(tickformat=".0%")
+dados_sim = []
+for e in estrategias:
+    sucesso = parametros[e]["taxa_sucesso"]
+    tempo = parametros[e]["tempo"]
+    custo = parametros[e]["custo"]
+    ganho = valor_causa * sucesso * (1 - custo)
+    risco = tempo / (sucesso + 0.01)
+    dados_sim.append([e, sucesso, tempo, custo, ganho, risco])
+
+df_sim = pd.DataFrame(dados_sim, columns=["Estratégia", "Taxa de Sucesso", "Tempo (relativo)", "Custo", "Ganho Esperado (R$)", "Risco"])
+
+st.dataframe(df_sim)
+
+# ===============================
+# GRÁFICOS
+# ===============================
+fig1 = px.bar(df_sim, x="Estratégia", y="Taxa de Sucesso", color="Estratégia", title="Taxa de Sucesso por Estratégia")
+fig2 = px.line(df_sim, x="Estratégia", y="Tempo (relativo)", markers=True, title="Tempo Relativo de Duração")
+fig3 = px.scatter(df_sim, x="Risco", y="Ganho Esperado (R$)", color="Estratégia", title="Dispersão: Risco × Ganho Esperado")
+
 st.plotly_chart(fig1, use_container_width=True)
-
-fig2 = px.line(
-    filtro.groupby("estrategia", as_index=False)["tempo_medio"].mean(),
-    x="estrategia", y="tempo_medio", markers=True,
-    title="Tempo médio (dias) por Estratégia",
-    labels={"tempo_medio":"Tempo (dias)"}
-)
 st.plotly_chart(fig2, use_container_width=True)
-
-fig3 = px.scatter(
-    filtro, x="risco", y="ganho_esperado", color="estrategia",
-    hover_data=["valor_causa", "tempo_medio", "taxa_sucesso"],
-    title="Dispersão: Risco × Ganho esperado",
-    labels={"risco":"Risco (tempo / taxa*100)", "ganho_esperado":"Ganho esperado (R$)"}
-)
 st.plotly_chart(fig3, use_container_width=True)
 
-st.caption("📌 Dados simulados — base local. Use a API do CNJ para dados reais atualizados.")
+# ===============================
+# GERAR RELATÓRIO PDF
+# ===============================
+st.markdown("---")
+st.subheader("📄 Gerar Relatório da Simulação")
+
+if st.button("Gerar PDF"):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", "B", 16)
+    pdf.cell(0, 10, "Simulador de Estratégia Processual", ln=True, align="C")
+    pdf.ln(10)
+    pdf.set_font("Arial", "", 12)
+    pdf.cell(0, 10, f"Tribunal: {tribunal.upper()}", ln=True)
+    pdf.cell(0, 10, f"Valor da causa: R$ {valor_causa:,.2f}", ln=True)
+    pdf.ln(5)
+    pdf.set_font("Arial", "B", 12)
+    pdf.cell(0, 10, "Resultados:", ln=True)
+    pdf.set_font("Arial", "", 12)
+    for _, row in df_sim.iterrows():
+        pdf.cell(0, 8, f"{row['Estratégia']}: sucesso {row['Taxa de Sucesso']*100:.1f}% | ganho R$ {row['Ganho Esperado (R$)']:,.2f}", ln=True)
+    pdf.output("relatorio_simulador.pdf")
+    with open("relatorio_simulador.pdf", "rb") as f:
+        st.download_button("📥 Baixar Relatório PDF", data=f, file_name="relatorio_simulador.pdf")
+
+st.caption("💡 Dados reais obtidos via API DataJud/CNJ e simulação estatística baseada em parâmetros hipotéticos.")
