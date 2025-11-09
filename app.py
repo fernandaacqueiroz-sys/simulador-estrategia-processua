@@ -6,7 +6,7 @@ import requests
 st.set_page_config(page_title="Simulador de Estratégia Processual", page_icon="⚖️", layout="wide")
 
 st.title("⚖️ Simulador de Estratégia Processual")
-st.write("Analise estratégias com base em dados (simulados) e visualize risco × ganho esperado.")
+st.write("Analise estratégias com base em dados e visualize risco × ganho esperado.")
 
 @st.cache_data
 def carregar_dados_cnj(limite=100):
@@ -29,6 +29,15 @@ def carregar_dados_cnj(limite=100):
         st.error(f"Erro ao acessar a API do CNJ: {e}")
         return pd.DataFrame()
 
+@st.cache_data
+def carregar_dados():
+    df = pd.read_csv("data/processos.csv")
+    df["valor_causa"] = pd.to_numeric(df["valor_causa"], errors="coerce")
+    df["tempo_medio"] = pd.to_numeric(df["tempo_medio"], errors="coerce")
+    df["taxa_sucesso"] = pd.to_numeric(df["taxa_sucesso"], errors="coerce")
+    return df.dropna(subset=["valor_causa", "tempo_medio", "taxa_sucesso"])
+
+st.sidebar.header("Parâmetros") 
 st.sidebar.markdown("---")
 usar_api = st.sidebar.checkbox("Usar dados reais do CNJ (DataJud API)", value=False)
 
