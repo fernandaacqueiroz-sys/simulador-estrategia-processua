@@ -3,8 +3,6 @@ import pandas as pd
 import requests
 import numpy as np
 import plotly.express as px
-import io
-import time
 from sklearn.linear_model import LinearRegression
 
 # --- Configuração Básica do Streamlit ---
@@ -23,7 +21,7 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-# Consulta JSON Genérica (match_all) para garantir resultados e evitar erro de 0 hits
+# Consulta JSON Genérica (match_all) para garantir resultados
 QUERY_JSON = {
     "size": 50,  # Busca 50 documentos para a amostra
     "query": {
@@ -49,7 +47,7 @@ def buscar_e_processar_dados_cnj():
         # Verifica se há resultados
         hits = data.get('hits', {}).get('hits', [])
         if not hits:
-            st.error("API CNJ retornou 0 resultados (Hits). A consulta JSON está muito restritiva ou o índice está vazio.")
+            st.error("API CNJ retornou 0 resultados. Verifique a chave ou a conexão.")
             return pd.DataFrame()
 
         # Extrai os campos relevantes dos hits
@@ -87,28 +85,22 @@ def buscar_e_processar_dados_cnj():
             """Simula a estratégia e o resultado com base na Classe Processual."""
             classe_lower = classe.lower()
             
-            # Se for um recurso, a estratégia mais provável foi Recorrer
             if 'recurso' in classe_lower or 'agravo' in classe_lower:
                 return 'Recorrer'
-            # Se for um instrumento de negociação/conflito resolvido, simula Negociar
             elif 'embargos' in classe_lower or 'conflito' in classe_lower:
                 return 'Negociar'
-            # Para classes genéricas ou outras, simula as três estratégias com pesos
             else:
                 return np.random.choice(
                     ['Recorrer', 'Negociar', 'Desistir'], 
                     p=[0.35, 0.45, 0.20] # Negociar é ligeiramente mais provável em genéricos
                 )
         
-        # Adiciona a Estratégia Escolhida (usada no filtro)
         df['Estrategia_Escolhid'] = df['Classe_Processual'].apply(simular_estrategia)
         
-        # Adiciona o Resultado (Sucesso = 1, Insucesso = 0)
-        # O sucesso é simulado com base no tipo de estratégia para a análise estatística.
         prob_sucesso = {
-            'Recorrer': 0.55,  # 55% de sucesso ao recorrer
-            'Negociar': 0.75,  # 75% de sucesso em acordos/negociação
-            'Desistir': 0.10   # 10% de "sucesso" (evitar custo/perda total)
+            'Recorrer': 0.55,
+            'Negociar': 0.75,
+            'Desistir': 0.10
         }
         
         df['Resultado'] = df['Estrategia_Escolhid'].apply(
@@ -116,8 +108,7 @@ def buscar_e_processar_dados_cnj():
         )
         
         # Calcula o Ganho/Perda (Impacto Financeiro)
-        # Ganho = Valor Causa * Resultado (sucesso); Perda = -Custo Processual
-        df['Custo_R$'] = df['Valor_Causa_R$'] * np.random.uniform(0.01, 0.05) # Custo entre 1% e 5% do valor
+        df['Custo_R$'] = df['Valor_Causa_R$'] * np.random.uniform(0.01, 0.05)
         df['Impacto_R$'] = np.where(df['Resultado'] == 1, df['Valor_Causa_R$'] - df['Custo_R$'], -df['Custo_R$'])
         
         return df
@@ -133,7 +124,6 @@ def buscar_e_processar_dados_cnj():
 # --- Carrega e Prepara os Dados ---
 df_processos = buscar_e_processar_dados_cnj()
 
-# Verifica se o DataFrame está vazio e interrompe o script
 if df_processos.empty:
     st.stop()
 
@@ -142,31 +132,27 @@ if df_processos.empty:
 
 def calcular_estatisticas(df):
     """Calcula as métricas de sucesso, tempo e impacto por estratégia."""
-    # 1. Média Ponderada e Regressão
     
     # Média (Probabilidade de Êxito)
     stats = df.groupby('Estrategia_Escolhid').agg(
         Taxa_Sucesso=('Resultado', 'mean'),
         Tempo_Medio=('Tempo_dias', 'mean'),
-        # CORREÇÃO: Removido o '$' do nome do argumento para evitar SyntaxError
+        # CORREÇÃO DA SINTAXE: Usando Impacto_Medio_RS em vez de Impacto_Medio_R$
         Impacto_Medio_RS=('Impacto_R$', 'mean'), 
         Total_Casos=('Impacto_R$', 'size')
     ).reset_index()
 
     # Formata resultados
     stats['Taxa_Sucesso'] = stats['Taxa_Sucesso'] * 100
-    # O Impacto médio será renomeado aqui para R$ para exibição
+    # Renomeia a coluna após o cálculo para fins de exibição
     stats.rename(columns={'Impacto_Medio_RS': 'Impacto_Medio_R$'}, inplace=True)
     stats['Impacto_Medio_R$'] = stats['Impacto_Medio_R$'].round(2)
     stats['Tempo_Medio'] = stats['Tempo_Medio'].round(0).astype(int)
 
     # Regressão Linear Simples (Prevendo Tempo com base no Valor da Causa)
-    # X = Valor da Causa (Variável Independente)
-    # Y = Tempo de Tramitação (Variável Dependente)
     X = df['Valor_Causa_R$'].values.reshape(-1, 1)
     y = df['Tempo_dias'].values
     
-    # Prepara a regressão apenas se tiver dados suficientes (evita erro)
     reg_model = LinearRegression().fit(X, y)
     
     return stats, reg_model
@@ -194,11 +180,11 @@ with tab2:
     
     st.subheader("Análise Estatística (O Algoritmo)")
     st.markdown("""
-    O sistema processa os dados por meio de análises estatísticas simples (conforme a proposta do trabalho), que incluem:
+    O sistema processa os dados por meio de análises estatísticas simples, que incluem:
     
-    * **Probabilidade de Êxito (Média Ponderada):** Calculada como a média da coluna `Resultado` (onde 1 é Sucesso e 0 é Insucesso) por estratégia.
-    * **Tempo Médio e Desvio:** Calculados com base no campo `Tempo_dias` (simulado/estimado) dos processos para cada estratégia.
-    * **Regressão Linear:** Um modelo de Regressão Linear é utilizado para estimar a correlação entre o **Valor da Causa** (real) e o **Tempo de Tramitação** (simulado), permitindo uma projeção de duração.
+    * **Probabilidade de Êxito (Média Ponderada):** Calculada como a média da coluna `Resultado` por estratégia.
+    * **Tempo Médio:** Calculado a partir do campo `Tempo_dias` dos processos.
+    * **Regressão Linear:** Utilizada para estimar a correlação entre o **Valor da Causa** e o **Tempo de Tramitação**.
     """)
     st.subheader("Chave API e Fonte")
     st.code(f"Endpoint: {API_URL}\nAPI Key (Pública): {API_KEY}", language="python")
@@ -208,32 +194,27 @@ with tab2:
 with tab1:
     st.header("Defina os Parâmetros do Seu Caso")
     
-    # Sidebar de Input
-    
     col_input_1, col_input_2, col_input_3 = st.columns(3)
     
     with col_input_1:
-        # Filtro de Classe (Baseado nos dados reais)
         classes_disponiveis = df_processos['Classe_Processual'].unique()
         classe_escolhida = st.selectbox(
             "Classe Processual (Dados Reais do STJ)",
             options=classes_disponiveis,
             index=0,
-            help="Selecione a Classe Processual mais próxima do seu caso. As opções são extraídas da amostra da API."
+            help="Selecione a Classe Processual mais próxima do seu caso."
         )
 
     with col_input_2:
-        # Filtro de Estratégia (Baseado na simulação)
         estrategias_disponiveis = df_stats['Estrategia_Escolhid'].unique()
         estrategia_foco = st.selectbox(
             "Estratégia de Foco",
             options=estrategias_disponiveis,
             index=estrategias_disponiveis.tolist().index('Negociar') if 'Negociar' in estrategias_disponiveis else 0,
-            help="Selecione a estratégia cuja viabilidade você quer analisar para esta Classe Processual."
+            help="Selecione a estratégia cuja viabilidade você quer analisar."
         )
 
     with col_input_3:
-        # Input de Valor da Causa
         valor_causa = st.number_input(
             "Valor da Causa (R$)",
             min_value=1000.0,
@@ -241,7 +222,7 @@ with tab1:
             value=25000.0,
             step=1000.0,
             format="%.2f",
-            help="Insira o valor econômico da demanda para calcular o Impacto Financeiro Esperado."
+            help="Insira o valor econômico da demanda."
         )
         
     st.markdown("---")
@@ -250,17 +231,13 @@ with tab1:
     
     df_foco = df_stats[df_stats['Estrategia_Escolhid'] == estrategia_foco].iloc[0]
     
-    # 1. Métrica de Tempo (Baseado no Valor da Causa usando Regressão)
-    # Prevê o tempo para o valor_causa inserido, usando o modelo de regressão
-    # Evita erro se o valor for muito fora do range dos dados de treino
+    # Métrica de Tempo (Baseado no Valor da Causa usando Regressão)
     try:
         tempo_estimado_reg = reg_model.predict(np.array([[valor_causa]]))[0]
     except:
-        tempo_estimado_reg = df_foco['Tempo_Medio'] # Fallback para o tempo médio
+        tempo_estimado_reg = df_foco['Tempo_Medio']
         
     tempo_medio_base = df_foco['Tempo_Medio']
-    
-    # Calcula a diferença para o Delta do st.metric
     delta_tempo = (tempo_estimado_reg - df_foco['Tempo_Medio']) / df_foco['Tempo_Medio'] * 100
     
     st.subheader(f"📊 Resultados Estimados para a Estratégia: {estrategia_foco}")
@@ -275,12 +252,11 @@ with tab1:
         )
 
     with col_metric_2:
-        # Exibe o impacto financeiro (Média Ponderada)
         st.metric(
             label="Impacto Financeiro Esperado (Média)",
             value=f"R$ {df_foco['Impacto_Medio_R$']:,.2f}",
             delta_color="off",
-            help="Média Ponderada do impacto (Ganho - Custo) para essa estratégia."
+            help="Média Ponderada do impacto (Ganho - Custo)."
         )
 
     with col_metric_3:
@@ -289,7 +265,7 @@ with tab1:
             value=f"{tempo_estimado_reg:.0f} dias",
             delta=f"{delta_tempo:.1f}% vs. Média da Base ({tempo_medio_base} dias)",
             delta_color="inverse" if delta_tempo > 0 else "normal",
-            help="Estimativa baseada em Regressão Linear, considerando o Valor da Causa informado."
+            help="Estimativa baseada em Regressão Linear."
         )
         
     st.markdown("---")
@@ -311,7 +287,7 @@ with tab1:
             labels={'Estrategia_Escolhid': 'Estratégia', 'Taxa_Sucesso': 'Sucesso (%)'},
             title='Comparação de Probabilidade de Ganho/Resultado Positivo',
             color_discrete_map={
-                estrategia_foco: '#1E90FF', # Destaque a estratégia de foco em azul
+                estrategia_foco: '#1E90FF',
                 'Recorrer': '#FF4B4B', 
                 'Negociar': '#3CB371', 
                 'Desistir': '#696969'
@@ -319,6 +295,7 @@ with tab1:
         )
         fig_sucesso.update_layout(xaxis_title="", yaxis_range=[0, 100])
         st.plotly_chart(fig_sucesso, use_container_width=True)
+        # 
 
     # 2. Gráfico de Pizza: Distribuição de Impacto Financeiro (Média Ponderada)
     with col_grafico_2:
@@ -333,6 +310,7 @@ with tab1:
         )
         fig_impacto.update_traces(textinfo='percent+label')
         st.plotly_chart(fig_impacto, use_container_width=True)
+        # 
 
     # --- Relatório Final (Requisito PDF) ---
     st.markdown("---")
