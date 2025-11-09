@@ -26,7 +26,7 @@ def carregar_dados_cnj(tribunal="tjrj", limite=50):
     }
     payload = {
         "query": {"match_all": {}},
-        "size": limite
+        "size": int(limite)
     }
 
     try:
@@ -37,10 +37,7 @@ def carregar_dados_cnj(tribunal="tjrj", limite=50):
         if not resultados:
             st.warning("Nenhum processo retornado pela API.")
             return pd.DataFrame()
-
-        df = pd.json_normalize(resultados)
-        return df
-
+        return pd.json_normalize(resultados)
     except Exception as e:
         st.error(f"Erro ao acessar o CNJ: {e}")
         return pd.DataFrame()
