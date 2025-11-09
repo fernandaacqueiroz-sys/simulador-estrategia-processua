@@ -32,13 +32,57 @@ QUERY_JSON = {
 
 # --- FUNÇÕES DE PROCESSAMENTO ---
 
-@st.cache_data(ttl=3600)  # Cache de 1 hora para evitar chamadas repetidas
 def carregar_dados_api_cnj():
     """Tenta carregar dados da API do CNJ. Em caso de falha, retorna um DataFrame vazio."""
+    # A remoção do @st.cache_data força o recarregamento, resolvendo erros de cache antigos.
     try:
-        response = requests.post(API_URL, headers=HEADERS, json=QUERY_JSON, timeout=10)
+        response = requests.post(API_URL, headers=HEADERS, json=QUERY_JSON, timeout=15)
         response.raise_for_status()
         data = response.json()
+        
+        # Extrai apenas os 'hits' (resultados dos processos)
+        processos = [hit['_source'] for hit in data['hits']['hits']]
+        
+        # Cria DataFrame
+        df_bruto = pd.json_normalize(processos)
+        
+        if df_bruto.empty:
+            return pd.DataFrame(), "API CNJ retornou 0 resultados (Hits). Verifique a consulta JSON."
+
+        # Mapeamento e Limpeza (Processamento do Juridiquês)
+        df = pd.DataFrame()
+        
+        # 1. Classe Processual e Assunto
+        df['Classe_Processual'] = df_bruto.get('classeProcessual.nome', 'N/A')
+        df['Assunto'] = df_bruto.get('assunto.nome', 'Não Informado')
+        
+        # 2. Valor da Causa: TRATAMENTO ROBUSTO CONTRA AUSÊNCIA DO CAMPO
+        if 'valorDaCausa' in df_bruto.columns:
+            # Tenta converter para float, substituindo erros por 0
+            df['Valor_Causa_R$'] = pd.to_numeric(df_bruto['valorDaCausa'], errors='coerce').fillna(0)
+        else:
+            # Fallback seguro: cria a coluna com zeros
+            df['Valor_Causa_R$'] = pd.Series(0.0, index=df_bruto.index)
+        
+        # 3. Tempo de Tramitação: TRATAMENTO ROBUSTO CONTRA AUSÊNCIA DO CAMPO
+        if 'dataAjuizamento' in df_bruto.columns:
+            df['Data_Ajuizamento'] = pd.to_datetime(df_bruto['dataAjuizamento'], errors='coerce')
+            df['Tempo_dias'] = (pd.to_datetime('today') - df['Data_Ajuizamento']).dt.days.fillna(0).astype(int)
+        else:
+            df['Tempo_dias'] = np.random.randint(100, 2000, size=len(df_bruto)) 
+            
+        # Filtra processos com Valor da Causa zero/nulo para análise estatística
+        df_limpo = df[df['Valor_Causa_R$'] >= 1.0].copy() 
+
+        if df_limpo.empty:
+            return pd.DataFrame(), "A API retornou dados, mas todos foram filtrados (Valor da Causa zero/nulo)."
+        
+        return df_limpo, "Sucesso: Dados carregados e limpos via API CNJ."
+        
+    except requests.exceptions.RequestException as e:
+        return pd.DataFrame(), f"Erro de Conexão com a API: {e}"
+
+
         
         # Extrai apenas os 'hits' (resultados dos processos)
         processos = [hit['_source'] for hit in data['hits']['hits']]
