@@ -4,3 +4,4 @@ requests
 numpy
 plotly
 scikit-learn
+tabulate
