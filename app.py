@@ -34,7 +34,7 @@ QUERY_JSON = {
 
 def carregar_dados_api_cnj():
     """Tenta carregar dados da API do CNJ. Em caso de falha, retorna um DataFrame vazio."""
-    # A remoção do @st.cache_data força o recarregamento, resolvendo erros de cache antigos.
+    # SEM @st.cache_data para evitar erro de cache corrompido!
     try:
         response = requests.post(API_URL, headers=HEADERS, json=QUERY_JSON, timeout=15)
         response.raise_for_status()
@@ -71,46 +71,6 @@ def carregar_dados_api_cnj():
         else:
             df['Tempo_dias'] = np.random.randint(100, 2000, size=len(df_bruto)) 
             
-        # Filtra processos com Valor da Causa zero/nulo para análise estatística
-        df_limpo = df[df['Valor_Causa_R$'] >= 1.0].copy() 
-
-        if df_limpo.empty:
-            return pd.DataFrame(), "A API retornou dados, mas todos foram filtrados (Valor da Causa zero/nulo)."
-        
-        return df_limpo, "Sucesso: Dados carregados e limpos via API CNJ."
-        
-    except requests.exceptions.RequestException as e:
-        return pd.DataFrame(), f"Erro de Conexão com a API: {e}"
-
-
-        
-        # Extrai apenas os 'hits' (resultados dos processos)
-        processos = [hit['_source'] for hit in data['hits']['hits']]
-        
-        # Cria DataFrame
-        df_bruto = pd.json_normalize(processos)
-        
-        if df_bruto.empty:
-            return pd.DataFrame(), "API CNJ retornou 0 resultados (Hits). Verifique a consulta JSON."
-
-        # Mapeamento e Limpeza (Processamento do Juridiquês)
-        df = pd.DataFrame()
-        
-        # 1. Classe Processual e Assunto
-        df['Classe_Processual'] = df_bruto.get('classeProcessual.nome', 'N/A')
-        df['Assunto'] = df_bruto.get('assunto.nome', 'Não Informado')
-        
-        # 2. Valor da Causa
-        df['Valor_Causa_R$'] = df_bruto.get('valorDaCausa', 0).astype(float).fillna(0)
-        
-        # 3. Tempo de Tramitação (Simulação baseada na data de ajuizamento)
-        data_col = df_bruto.get('dataAjuizamento', pd.Series(dtype=object))
-        if not data_col.empty:
-            df['Data_Ajuizamento'] = pd.to_datetime(data_col, errors='coerce')
-            df['Tempo_dias'] = (pd.to_datetime('today') - df['Data_Ajuizamento']).dt.days.fillna(0).astype(int)
-        else:
-            df['Tempo_dias'] = np.random.randint(100, 2000, size=len(df)) # Fallback para tempo
-
         # Filtra processos com Valor da Causa zero/nulo para análise estatística
         df_limpo = df[df['Valor_Causa_R$'] >= 1.0].copy() 
 
@@ -212,7 +172,7 @@ def calcular_estatisticas(df):
     df_stats = df.groupby('Estrategia_Escolhid').agg(
         Taxa_Sucesso=('Resultado', 'mean'),
         Tempo_Medio=('Tempo_dias', 'mean'),
-        Impacto_Medio_RS=('Impacto_R$', 'mean'), # Corrigido nome para Impacto_Medio_RS
+        Impacto_Medio_RS=('Impacto_R$', 'mean'), 
         Total_Casos=('Impacto_R$', 'size')
     ).reset_index()
 
@@ -299,6 +259,7 @@ def main():
             impacto_medio_foco = df_foco['Impacto_R$'].mean()
             tempo_medio_foco = df_foco['Tempo_dias'].mean()
         else:
+            # Fallback seguro para as métricas se o filtro for muito restrito
             taxa_sucesso_foco, impacto_medio_foco, tempo_medio_foco = 0, 0, 0
         
         # Calcula delta (comparação com a média geral)
@@ -401,32 +362,32 @@ def main():
 
 
     # --- TAB: METODOLOGIA ---
-with tab_metodologia:
-    
-    st.markdown("<h2>Sobre e Metodologia do Simulador</h2>", unsafe_allow_html=True)
-    st.markdown("---")
-    
-    st.markdown("<h4>1. Fonte de Dados e Conexão (Solução de Estabilidade)</h4>")
-    st.markdown(f"**Fonte Atual:** **{fonte_dados}**")
-    st.markdown(f"**Status da API:** {status_cnj}")
-    st.markdown("""
-        * O simulador tenta se conectar via **API (Interface de Programação de Aplicação)** autênticada ao **DataJud/STJ**.
-        * **Mecanismo Robusto:** O código foi projetado para ser antifrágil. Ele verifica se os campos críticos da API (`valorDaCausa`, `dataAjuizamento`) existem e usa tratamento de erro para garantir que a aplicação não quebre, mesmo com dados inconsistentes ou ausentes (o que era o principal problema).
-        * Se a amostra limpa for insuficiente, o sistema usa um *dataset* de **Fallback** (simulado) para garantir a funcionalidade da análise estatística.
-    """)
-    
-    st.markdown("<h4>2. Algoritmo de Análise Estatística</h4>")
-    st.markdown("""
-        O coração do simulador é a análise estatística. Para cada estratégia:
+    with tab_metodologia:
         
-        * **Probabilidade de Êxito:** Calculada como a **média** da coluna 'Resultado' (onde 1 = Sucesso, 0 = Insucesso) para a estratégia escolhida.
-        * **Impacto Financeiro Esperado:** Calculado pela **Média Ponderada** do valor da causa. Multiplicamos o Valor_Causa pelo Resultado (1 ou 0) e subtraímos o Custo Estimado. A média final reflete o ganho líquido esperado.
-        * **Regressão (Estimativa de Tempo):** O modelo `scikit-learn LinearRegression` é usado para prever o `Tempo_dias` com base no `Valor_Causa_R$`, mostrando a tendência de que casos de maior valor/complexidade tendem a demorar mais.
-    """)
-    
-    st.markdown("<h4>3. Dados Brutos Processados</h4>")
-    st.markdown("Amostra do DataFrame processado (após limpeza e simulação de estratégia):")
-    st.dataframe(df_final.head(10), use_container_width=True)
+        st.markdown("<h2>Sobre e Metodologia do Simulador</h2>", unsafe_allow_html=True)
+        st.markdown("---")
+        
+        st.markdown("<h4>1. Fonte de Dados e Conexão (Solução de Estabilidade)</h4>")
+        st.markdown(f"**Fonte Atual:** **{fonte_dados}**")
+        st.markdown(f"**Status da API:** {status_cnj}")
+        st.markdown("""
+            * O simulador tenta se conectar via **API (Interface de Programação de Aplicação)** autênticada ao **DataJud/STJ**.
+            * **Mecanismo Robusto:** O código foi projetado para ser antifrágil. Ele verifica se os campos críticos da API (`valorDaCausa`, `dataAjuizamento`) existem e usa tratamento de erro para garantir que a aplicação não quebre, mesmo com dados inconsistentes ou ausentes (o que era o principal problema).
+            * Se a amostra limpa for insuficiente, o sistema usa um *dataset* de **Fallback** (simulado) para garantir a funcionalidade da análise estatística.
+        """)
+        
+        st.markdown("<h4>2. Algoritmo de Análise Estatística</h4>")
+        st.markdown("""
+            O coração do simulador é a análise estatística. Para cada estratégia:
+            
+            * **Probabilidade de Êxito:** Calculada como a **média** da coluna 'Resultado' (onde 1 = Sucesso, 0 = Insucesso) para a estratégia escolhida.
+            * **Impacto Financeiro Esperado:** Calculado pela **Média Ponderada** do valor da causa. Multiplicamos o Valor_Causa pelo Resultado (1 ou 0) e subtraímos o Custo Estimado. A média final reflete o ganho líquido esperado.
+            * **Regressão (Estimativa de Tempo):** O modelo `scikit-learn LinearRegression` é usado para prever o `Tempo_dias` com base no `Valor_Causa_R$`, mostrando a tendência de que casos de maior valor/complexidade tendem a demorar mais.
+        """)
+        
+        st.markdown("<h4>3. Dados Brutos Processados</h4>")
+        st.markdown("Amostra do DataFrame processado (após limpeza e simulação de estratégia):")
+        st.dataframe(df_final.head(10), use_container_width=True)
 
 if __name__ == '__main__':
     main()
