@@ -9,152 +9,153 @@ from sklearn.linear_model import LinearRegression
 st.set_page_config(layout="wide", page_title="Simulador de Estratégia Processual (STJ)", page_icon="⚖️")
 
 # --- Variáveis da API CNJ/STJ ---
-# Endpoint específico do STJ para busca
 API_URL = "https://api-publica.datajud.cnj.jus.br/api_publica_stj/_search"
-
-# Chave de Autenticação (Chave Pública)
 API_KEY = "cDZHYzlZa0JadVREZDJCendQbXY6SkJlTzNjLV9TRENyQk1RdnFKZGRQdw=="
-
-# Cabeçalhos da Requisição com Autenticação
 HEADERS = {
     "Authorization": f"APIKey {API_KEY}",
     "Content-Type": "application/json"
 }
 
-# Consulta JSON Genérica (match_all) para garantir resultados
 QUERY_JSON = {
-    "size": 50,  # Busca 50 documentos para a amostra
+    "size": 50,
     "query": {
         "match_all": {}
     },
-    # Campos que queremos extrair:
     "_source": ["classeProcessual.nome", "valorDaCausa", "dataAjuizamento", "assunto", "tribunal.nome", "tempoDeTramitacao"]
 }
 
 
-@st.cache_data(ttl=3600)  # Cache de 1 hora para evitar chamadas excessivas à API
-def buscar_e_processar_dados_cnj():
-    """Busca dados da API do CNJ/STJ e os processa para simulação."""
-    st.info("Buscando dados no DataJud (STJ) via API... (Cache de 1h)")
+# --- 1. FUNÇÃO FALLBACK: Cria um DataFrame Simulado Garantido ---
+def criar_df_simulado():
+    """Cria um DataFrame garantido para fallback quando a API falha ou retorna dados sujos."""
+    st.warning("⚠️ Falha ao obter dados limpos da API. Usando dados simulados para garantir a análise.")
+    np.random.seed(42) # Garante a reprodutibilidade dos dados simulados
+
+    data = {
+        'Classe_Processual': np.random.choice(['Recurso Especial', 'Agravo de Instrumento', 'Ação Rescisória', 'Conflito de Competência'], 50),
+        'Valor_Causa_R$': np.random.randint(5000, 500000, 50),
+        'Tempo_dias': np.random.randint(300, 2000, 50)
+    }
+    df = pd.DataFrame(data)
     
+    # Simula variáveis analíticas com base nos dados garantidos
+    def simular_estrategia_fallback(classe):
+        if 'Recurso' in classe: return 'Recorrer'
+        if 'Rescisória' in classe: return 'Desistir'
+        return 'Negociar'
+    
+    df['Estrategia_Escolhid'] = df['Classe_Processual'].apply(simular_estrategia_fallback)
+    
+    prob_sucesso = {'Recorrer': 0.58, 'Negociar': 0.70, 'Desistir': 0.15}
+    df['Resultado'] = df['Estrategia_Escolhid'].apply(
+        lambda x: 1 if np.random.rand() < prob_sucesso.get(x, 0.5) else 0
+    )
+    
+    df['Custo_R$'] = df['Valor_Causa_R$'] * np.random.uniform(0.01, 0.05)
+    df['Impacto_R$'] = np.where(df['Resultado'] == 1, df['Valor_Causa_R$'] - df['Custo_R$'], -df['Custo_R$'])
+    
+    return df
+
+# --- 2. FUNÇÃO PRINCIPAL DE BUSCA ---
+@st.cache_data(ttl=3600)
+def buscar_e_processar_dados_cnj():
+    """Busca dados da API e processa, com fallback para dados simulados em caso de falha."""
+    st.info("Buscando dados no DataJud (STJ) via API... (Cache de 1h)")
+    df_processos = pd.DataFrame() # DataFrame inicial vazio
+
     try:
-        # Faz a requisição POST autenticada
         response = requests.post(API_URL, headers=HEADERS, json=QUERY_JSON, timeout=10)
-        response.raise_for_status() # Lança exceção para códigos de erro (4xx ou 5xx)
-        
+        response.raise_for_status() 
         data = response.json()
-        
-        # Verifica se há resultados
         hits = data.get('hits', {}).get('hits', [])
-        if not hits:
-            st.error("API CNJ retornou 0 resultados. Verifique a chave ou a conexão.")
-            return pd.DataFrame()
+        
+        if hits:
+            processos = []
+            for hit in hits:
+                source = hit.get('_source', {})
+                classe = source.get('classeProcessual', {}).get('nome', 'N/A').split(':')[0].strip()
+                valor = source.get('valorDaCausa', 0)
+                tempo_raw = source.get('tempoDeTramitacao', {})
+                tempo_dias = tempo_raw.get('dias', np.random.randint(100, 1500)) if tempo_raw and isinstance(tempo_raw.get('dias'), (int, float)) else np.random.randint(100, 1500)
+                
+                processos.append({
+                    'Classe_Processual': classe,
+                    'Valor_Causa_R$': valor,
+                    'Tempo_dias': tempo_dias
+                })
 
-        # Extrai os campos relevantes dos hits
-        processos = []
-        for hit in hits:
-            source = hit.get('_source', {})
+            df = pd.DataFrame(processos)
+            df['Valor_Causa_R$'] = pd.to_numeric(df['Valor_Causa_R$'], errors='coerce').fillna(0)
             
-            # Garante que os campos existem, usando N/A ou 0 como fallback
-            classe = source.get('classeProcessual', {}).get('nome', 'N/A').split(':')[0].strip()
-            valor = source.get('valorDaCausa', 0)
-            
-            # Tenta extrair o tempo de tramitação em dias (ou usa um valor default)
-            tempo_raw = source.get('tempoDeTramitacao', {})
-            tempo_dias = tempo_raw.get('dias', np.random.randint(100, 1500)) if tempo_raw else np.random.randint(100, 1500)
-            
-            processos.append({
-                'Classe_Processual': classe,
-                'Valor_Causa_R$': valor,
-                'Tempo_dias': tempo_dias
-            })
+            # Limpeza crucial: aceita qualquer valor maior que 1 para evitar descartar todos
+            df_limpo = df[df['Valor_Causa_R$'] >= 1.0].copy() 
 
-        df = pd.DataFrame(processos)
-        
-        # Filtra valores da causa não numéricos ou muito baixos
-        df['Valor_Causa_R$'] = pd.to_numeric(df['Valor_Causa_R$'], errors='coerce').fillna(0)
-        df = df[df['Valor_Causa_R$'] > 100].copy() # Limpa valores nulos ou muito baixos
-
-        if df.empty:
-            st.warning("Após o processamento dos dados, o DataFrame está vazio. Recarregue ou tente novamente.")
-            return pd.DataFrame()
-        
-        # --- Simulação de Variáveis Analíticas (CRUCIAL PARA O SIMULADOR) ---
-        
-        def simular_estrategia(classe):
-            """Simula a estratégia e o resultado com base na Classe Processual."""
-            classe_lower = classe.lower()
+            if df_limpo.empty:
+                st.warning("A API retornou dados, mas todos foram filtrados (Valor da Causa zero/nulo).")
+                return criar_df_simulado() # Chama o fallback
             
-            if 'recurso' in classe_lower or 'agravo' in classe_lower:
-                return 'Recorrer'
-            elif 'embargos' in classe_lower or 'conflito' in classe_lower:
-                return 'Negociar'
-            else:
-                return np.random.choice(
-                    ['Recorrer', 'Negociar', 'Desistir'], 
-                    p=[0.35, 0.45, 0.20] # Negociar é ligeiramente mais provável em genéricos
-                )
+            df_processos = df_limpo
+        else:
+            st.error("API CNJ retornou 0 resultados (Hits vazios).")
+            return criar_df_simulado() # Chama o fallback se não houver hits
         
-        df['Estrategia_Escolhid'] = df['Classe_Processual'].apply(simular_estrategia)
-        
-        prob_sucesso = {
-            'Recorrer': 0.55,
-            'Negociar': 0.75,
-            'Desistir': 0.10
-        }
-        
-        df['Resultado'] = df['Estrategia_Escolhid'].apply(
-            lambda x: 1 if np.random.rand() < prob_sucesso.get(x, 0.5) else 0
-        )
-        
-        # Calcula o Ganho/Perda (Impacto Financeiro)
-        df['Custo_R$'] = df['Valor_Causa_R$'] * np.random.uniform(0.01, 0.05)
-        df['Impacto_R$'] = np.where(df['Resultado'] == 1, df['Valor_Causa_R$'] - df['Custo_R$'], -df['Custo_R$'])
-        
-        return df
-
     except requests.exceptions.RequestException as e:
-        st.error(f"❌ Erro de conexão ou autenticação com a API CNJ/STJ. Verifique a API Key e a URL. Detalhes: {e}")
-        return pd.DataFrame()
+        st.error(f"❌ Erro de conexão ou autenticação com a API CNJ/STJ. Detalhes: {e}. ")
+        return criar_df_simulado() # Chama o fallback em caso de falha de conexão
     except Exception as e:
-        st.error(f"❌ Erro inesperado durante o processamento dos dados. Detalhes: {e}")
-        return pd.DataFrame()
+        st.error(f"❌ Erro inesperado no processamento. Detalhes: {e}")
+        return criar_df_simulado() # Chama o fallback em caso de erro
 
+    # --- Aplicação da Simulação Analítica (Apenas se a API funcionou) ---
+    def simular_estrategia(classe):
+        classe_lower = classe.lower()
+        if 'recurso' in classe_lower or 'agravo' in classe_lower: return 'Recorrer'
+        elif 'embargos' in classe_lower or 'conflito' in classe_lower: return 'Negociar'
+        return np.random.choice(['Recorrer', 'Negociar', 'Desistir'], p=[0.35, 0.45, 0.20])
 
-# --- Carrega e Prepara os Dados ---
+    df_processos['Estrategia_Escolhid'] = df_processos['Classe_Processual'].apply(simular_estrategia)
+    prob_sucesso = {'Recorrer': 0.55, 'Negociar': 0.75, 'Desistir': 0.10}
+    df_processos['Resultado'] = df_processos['Estrategia_Escolhid'].apply(
+        lambda x: 1 if np.random.rand() < prob_sucesso.get(x, 0.5) else 0
+    )
+    df_processos['Custo_R$'] = df_processos['Valor_Causa_R$'] * np.random.uniform(0.01, 0.05)
+    df_processos['Impacto_R$'] = np.where(df_processos['Resultado'] == 1, df_processos['Valor_Causa_R$'] - df_processos['Custo_R$'], -df_processos['Custo_R$'])
+
+    return df_processos
+
+# --- Carrega os Dados (Usa API ou Fallback) ---
 df_processos = buscar_e_processar_dados_cnj()
 
 if df_processos.empty:
+    st.error("Não foi possível carregar dados limpos, mesmo com o fallback. Verifique o código.")
     st.stop()
 
 
-# --- Funções de Análise Estatística (Requisitos do Trabalho) ---
+# --- Funções de Análise Estatística (Restante do Código) ---
 
 def calcular_estatisticas(df):
-    """Calcula as métricas de sucesso, tempo e impacto por estratégia."""
-    
-    # Média (Probabilidade de Êxito)
     stats = df.groupby('Estrategia_Escolhid').agg(
         Taxa_Sucesso=('Resultado', 'mean'),
         Tempo_Medio=('Tempo_dias', 'mean'),
-        # CORREÇÃO DA SINTAXE: Usando Impacto_Medio_RS em vez de Impacto_Medio_R$
         Impacto_Medio_RS=('Impacto_R$', 'mean'), 
         Total_Casos=('Impacto_R$', 'size')
     ).reset_index()
 
-    # Formata resultados
     stats['Taxa_Sucesso'] = stats['Taxa_Sucesso'] * 100
-    # Renomeia a coluna após o cálculo para fins de exibição
     stats.rename(columns={'Impacto_Medio_RS': 'Impacto_Medio_R$'}, inplace=True)
     stats['Impacto_Medio_R$'] = stats['Impacto_Medio_R$'].round(2)
     stats['Tempo_Medio'] = stats['Tempo_Medio'].round(0).astype(int)
 
-    # Regressão Linear Simples (Prevendo Tempo com base no Valor da Causa)
-    X = df['Valor_Causa_R$'].values.reshape(-1, 1)
-    y = df['Tempo_dias'].values
+    # Regressão Linear Simples
+    df_reg = df[df['Valor_Causa_R$'] < df['Valor_Causa_R$'].quantile(0.95)] 
     
+    # Verifica se a regressão pode ser feita (pelo menos 2 amostras)
+    if len(df_reg) < 2:
+        return stats, None # Retorna None se não houver dados suficientes para a regressão
+        
+    X = df_reg['Valor_Causa_R$'].values.reshape(-1, 1)
+    y = df_reg['Tempo_dias'].values
     reg_model = LinearRegression().fit(X, y)
-    
     return stats, reg_model
 
 # Gera as estatísticas base
@@ -175,19 +176,21 @@ tab1, tab2 = st.tabs(["📈 SIMULAÇÃO E RESULTADOS", "💡 SOBRE E METODOLOGIA
 with tab2:
     st.header("Metodologia e Funcionamento")
     st.markdown("""
-    Este simulador utiliza dados reais de processos judiciais do **Superior Tribunal de Justiça (STJ)**, obtidos diretamente através da sua **API Pública** (ElasticSearch) e autenticada com a chave pública do CNJ.
+    Este simulador utiliza dados de processos judiciais, priorizando a **API Pública do STJ** quando os dados estão limpos e caindo em um **DataSet Simulado** quando a API falha.
     """)
     
     st.subheader("Análise Estatística (O Algoritmo)")
     st.markdown("""
     O sistema processa os dados por meio de análises estatísticas simples, que incluem:
-    
     * **Probabilidade de Êxito (Média Ponderada):** Calculada como a média da coluna `Resultado` por estratégia.
     * **Tempo Médio:** Calculado a partir do campo `Tempo_dias` dos processos.
     * **Regressão Linear:** Utilizada para estimar a correlação entre o **Valor da Causa** e o **Tempo de Tramitação**.
     """)
-    st.subheader("Chave API e Fonte")
-    st.code(f"Endpoint: {API_URL}\nAPI Key (Pública): {API_KEY}", language="python")
+    st.subheader("Fonte de Dados Utilizada")
+    if "Recurso Especial" in df_processos['Classe_Processual'].unique().tolist():
+        st.success("Dados da API CNJ/STJ Carregados e Limpos com Sucesso.")
+    else:
+        st.warning("Dados Simulado Carregados (API falhou ou dados estavam sujos).")
     st.dataframe(df_processos.head(), use_container_width=True)
 
 
@@ -199,7 +202,7 @@ with tab1:
     with col_input_1:
         classes_disponiveis = df_processos['Classe_Processual'].unique()
         classe_escolhida = st.selectbox(
-            "Classe Processual (Dados Reais do STJ)",
+            "Classe Processual (Dados de Amostra)",
             options=classes_disponiveis,
             index=0,
             help="Selecione a Classe Processual mais próxima do seu caso."
@@ -217,7 +220,7 @@ with tab1:
     with col_input_3:
         valor_causa = st.number_input(
             "Valor da Causa (R$)",
-            min_value=1000.0,
+            min_value=1.0,
             max_value=10000000.0,
             value=25000.0,
             step=1000.0,
@@ -232,13 +235,15 @@ with tab1:
     df_foco = df_stats[df_stats['Estrategia_Escolhid'] == estrategia_foco].iloc[0]
     
     # Métrica de Tempo (Baseado no Valor da Causa usando Regressão)
-    try:
-        tempo_estimado_reg = reg_model.predict(np.array([[valor_causa]]))[0]
-    except:
-        tempo_estimado_reg = df_foco['Tempo_Medio']
-        
+    tempo_estimado_reg = df_foco['Tempo_Medio'] # Fallback default
+    if reg_model is not None:
+        try:
+            tempo_estimado_reg = reg_model.predict(np.array([[valor_causa]]))[0]
+        except:
+            pass # Usa o fallback
+
     tempo_medio_base = df_foco['Tempo_Medio']
-    delta_tempo = (tempo_estimado_reg - df_foco['Tempo_Medio']) / df_foco['Tempo_Medio'] * 100
+    delta_tempo = (tempo_estimado_reg - df_foco['Tempo_Medio']) / df_foco['Tempo_Medio'] * 100 if df_foco['Tempo_Medio'] != 0 else 0
     
     st.subheader(f"📊 Resultados Estimados para a Estratégia: {estrategia_foco}")
 
@@ -295,22 +300,24 @@ with tab1:
         )
         fig_sucesso.update_layout(xaxis_title="", yaxis_range=[0, 100])
         st.plotly_chart(fig_sucesso, use_container_width=True)
-        # 
 
     # 2. Gráfico de Pizza: Distribuição de Impacto Financeiro (Média Ponderada)
     with col_grafico_2:
         st.markdown("##### 💰 Distribuição do Impacto Financeiro Médio")
-        fig_impacto = px.pie(
-            df_stats, 
-            names='Estrategia_Escolhid', 
-            values='Impacto_Medio_R$',
-            title='Impacto Médio (Ganho Líquido) por Estratégia',
-            color_discrete_sequence=['#1E90FF', '#3CB371', '#FF4B4B', '#696969'],
-            hover_data=['Tempo_Medio'],
-        )
-        fig_impacto.update_traces(textinfo='percent+label')
-        st.plotly_chart(fig_impacto, use_container_width=True)
-        # 
+        df_pie = df_stats[df_stats['Impacto_Medio_R$'] > 0]
+        if df_pie.empty:
+            st.warning("Não há impacto financeiro positivo para exibir no gráfico de pizza.")
+        else:
+            fig_impacto = px.pie(
+                df_pie, 
+                names='Estrategia_Escolhid', 
+                values='Impacto_Medio_R$',
+                title='Impacto Médio (Ganho Líquido) por Estratégia',
+                color_discrete_sequence=['#1E90FF', '#3CB371', '#FF4B4B', '#696969'],
+                hover_data=['Tempo_Medio'],
+            )
+            fig_impacto.update_traces(textinfo='percent+label')
+            st.plotly_chart(fig_impacto, use_container_width=True)
 
     # --- Relatório Final (Requisito PDF) ---
     st.markdown("---")
@@ -341,7 +348,6 @@ with tab1:
     *Este relatório é uma simulação baseada em dados históricos e modelos estatísticos. Não substitui a análise jurídica profissional.*
     """
     
-    # Exibe o resumo do relatório em um expander para fácil leitura/cópia
     with st.expander("Clique para visualizar e copiar o Relatório Completo", expanded=False):
         st.code(relatorio_texto, language='markdown')
 
