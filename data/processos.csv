@@ -1,0 +1,19 @@
+classe,instancia,valor_causa,estrategia,resultado,tempo_medio,taxa_sucesso
+Ação Civil Pública,1ª,100000,Recorrer,Procedente,360,0.65
+Ação Civil Pública,1ª,120000,Negociar,Acordo,280,0.72
+Ação Civil Pública,1ª,90000,Prosseguir,Improcedente,410,0.40
+Ação Civil Pública,2ª,110000,Recorrer,Procedente,520,0.58
+Ação Civil Pública,2ª,95000,Negociar,Acordo,430,0.66
+Mandado de Segurança,1ª,50000,Prosseguir,Improcedente,200,0.42
+Mandado de Segurança,1ª,60000,Recorrer,Procedente,260,0.55
+Mandado de Segurança,2ª,55000,Negociar,Acordo,310,0.60
+Cobrança,1ª,20000,Prosseguir,Procedente,240,0.72
+Cobrança,1ª,18000,Negociar,Acordo,180,0.80
+Cobrança,2ª,22000,Recorrer,Improcedente,350,0.45
+Embargos à Execução,1ª,75000,Recorrer,Procedente,300,0.62
+Embargos à Execução,1ª,68000,Negociar,Acordo,210,0.70
+Embargos à Execução,2ª,72000,Prosseguir,Improcedente,420,0.38
+Execução Fiscal,1ª,150000,Prosseguir,Procedente,390,0.68
+Execução Fiscal,1ª,140000,Negociar,Acordo,260,0.74
+Execução Fiscal,2ª,155000,Recorrer,Improcedente,520,0.41
+Execução Fiscal,2ª,130000,Negociar,Acordo,450,0.65
