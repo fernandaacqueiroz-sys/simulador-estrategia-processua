@@ -89,3 +89,29 @@ fig3 = px.scatter(
 st.plotly_chart(fig3, use_container_width=True)
 
 st.caption("Obs.: Dados simulados para prova de conceito. Substitua por datasets do DataJud/CNJ quando disponíveis.")
+st.markdown("---")
+st.subheader("📡 Integração com dados reais do CNJ (DataJud API)")
+
+if st.button("🔍 Consultar classes processuais do CNJ"):
+    with st.spinner("Consultando o DataJud..."):
+        try:
+            url = "https://api-publica.datajud.cnj.jus.br/api_publica_teste/classes"
+            resposta = requests.get(url, timeout=20)
+            if resposta.status_code == 200:
+                dados = resposta.json()
+                resultados = dados.get("results", [])
+                if resultados:
+                    df_classes = pd.DataFrame(resultados)
+                    st.success(f"✅ {len(df_classes)} classes encontradas!")
+                    st.dataframe(df_classes.head(10))  # mostra as 10 primeiras
+                else:
+                    st.warning("Nenhum resultado retornado pela API.")
+            else:
+                st.error(f"Erro {resposta.status_code}: não foi possível acessar o DataJud.")
+        except Exception as e:
+            st.error(f"Falha na consulta: {e}")
+
+st.caption("""
+💡 Esta é uma integração **real** com a API pública do CNJ (DataJud).
+Você pode trocar o endpoint por outros disponíveis, como **assuntos**, **tribunais**, **movimentos** ou **processos**.
+""")
