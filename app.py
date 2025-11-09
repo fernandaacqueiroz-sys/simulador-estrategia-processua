@@ -255,10 +255,9 @@ def main():
             # Encontra a linha da estatística da estratégia de foco
             stats_foco = df_stats_comparacao[df_stats_comparacao['Estrategia_Escolhid'] == estrategia_foco].iloc[0]
             
-            # Converte a Taxa de Sucesso (string formatada com %) para float
-            taxa_sucesso_float = float(stats_foco['Probabilidade de Êxito'].replace('%', '').replace(',', '.')) / 100
-            
-            tempo_medio_foco = float(stats_foco['Tempo Médio'].replace(' dias', '').replace('.', '').replace(',', '.'))
+            # Key correção: usa Taxa_Sucesso e Tempo_Medio (nomes internos) antes da renomeação final
+            taxa_sucesso_float = float(stats_foco['Taxa_Sucesso'].replace('%', '').replace(',', '.')) / 100
+            tempo_medio_foco = float(stats_foco['Tempo_Medio'].replace(' dias', '').replace('.', '').replace(',', '.'))
             
             # Calcula o Impacto Projetado (MÉDIA PONDERADA REAL)
             # Ganho Projetado = (Valor_Causa * Taxa_Sucesso) - (Valor_Causa * Custo da Estratégia)
