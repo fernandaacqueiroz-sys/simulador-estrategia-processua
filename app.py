@@ -210,7 +210,8 @@ def main():
         fonte_dados = "DADOS SIMULADOS (Fallback)"
 
     # --- LAYOUT EM TABS ---
-    tab_simulador, tab_metodologia = st.tabs(["📈 SIMULAÇÃO E RESULTADOS", "💡 SOBRE E METODOLOGIA"])
+    # ESSA LINHA PRECISA ESTAR AQUI FORA DOS BLOCOS WITH!
+    tab_simulador, tab_metodologia = st.tabs(["📈 SIMULAÇÃO E RESULTADOS", "💡 SOBRE E METODOLOGIA"]) 
 
     with tab_simulador:
         
@@ -362,37 +363,33 @@ def main():
 
 
     # --- TAB: METODOLOGIA ---
-with tab_metodologia:
-    
-    st.markdown("<h2>Sobre e Metodologia do Simulador</h2>", unsafe_allow_html=True)
-    st.markdown("---")
-    
-    # CORREÇÃO AQUI: Garante que o H4 é interpretado
-    st.markdown("<h4>1. Fonte de Dados e Conexão (Solução de Estabilidade)</h4>", unsafe_allow_html=True) 
-    st.markdown(f"**Fonte Atual:** **{fonte_dados}**")
-    st.markdown(f"**Status da API:** {status_cnj}")
-    st.markdown("""
-        * O simulador tenta se conectar via **API (Interface de Programação de Aplicação)** autênticada ao **DataJud/STJ**.
-        * **Mecanismo Robusto:** O código foi projetado para ser antifrágil. Ele verifica se os campos críticos da API (`valorDaCausa`, `dataAjuizamento`) existem e usa tratamento de erro para garantir que a aplicação não quebre, mesmo com dados inconsistentes ou ausentes (o que era o principal problema).
-        * Se a amostra limpa for insuficiente, o sistema usa um *dataset* de **Fallback** (simulado) para garantir a funcionalidade da análise estatística.
-    """)
-    
-    # CORREÇÃO AQUI: Garante que o H4 é interpretado
-    st.markdown("<h4>2. Algoritmo de Análise Estatística</h4>", unsafe_allow_html=True)
-    st.markdown("""
-        O coração do simulador é a análise estatística. Para cada estratégia:
+    with tab_metodologia:
         
-        * **Probabilidade de Êxito:** Calculada como a **média** da coluna 'Resultado' (onde 1 = Sucesso, 0 = Insucesso) para a estratégia escolhida.
-        * **Impacto Financeiro Esperado:** Calculado pela **Média Ponderada** do valor da causa. Multiplicamos o Valor_Causa pelo Resultado (1 ou 0) e subtraímos o Custo Estimado. A média final reflete o ganho líquido esperado.
-        * **Regressão (Estimativa de Tempo):** O modelo `scikit-learn LinearRegression` é usado para prever o `Tempo_dias` com base no `Valor_Causa_R$`, mostrando a tendência de que casos de maior valor/complexidade tendem a demorar mais.
-    """)
-    
-    # CORREÇÃO AQUI: Garante que o H4 é interpretado
-    st.markdown("<h4>3. Dados Brutos Processados</h4>", unsafe_allow_html=True)
-    st.markdown("Amostra do DataFrame processado (após limpeza e simulação de estratégia):")
-    st.dataframe(df_final.head(10), use_container_width=True)
+        st.markdown("<h2>Sobre e Metodologia do Simulador</h2>", unsafe_allow_html=True)
+        st.markdown("---")
+        
+        st.markdown("<h4>1. Fonte de Dados e Conexão (Solução de Estabilidade)</h4>", unsafe_allow_html=True)
+        st.markdown(f"**Fonte Atual:** **{fonte_dados}**")
+        st.markdown(f"**Status da API:** {status_cnj}")
+        st.markdown("""
+            * O simulador tenta se conectar via **API (Interface de Programação de Aplicação)** autênticada ao **DataJud/STJ**.
+            * **Mecanismo Robusto:** O código foi projetado para ser antifrágil. Ele verifica se os campos críticos da API (`valorDaCausa`, `dataAjuizamento`) existem e usa tratamento de erro para garantir que a aplicação não quebre, mesmo com dados inconsistentes ou ausentes (o que era o principal problema).
+            * Se a amostra limpa for insuficiente, o sistema usa um *dataset* de **Fallback** (simulado) para garantir a funcionalidade da análise estatística.
+        """)
+        
+        st.markdown("<h4>2. Algoritmo de Análise Estatística</h4>", unsafe_allow_html=True)
+        st.markdown("""
+            O coração do simulador é a análise estatística. Para cada estratégia:
+            
+            * **Probabilidade de Êxito:** Calculada como a **média** da coluna 'Resultado' (onde 1 = Sucesso, 0 = Insucesso) para a estratégia escolhida.
+            * **Impacto Financeiro Esperado:** Calculado pela **Média Ponderada** do valor da causa. Multiplicamos o Valor_Causa pelo Resultado (1 ou 0) e subtraímos o Custo Estimado. A média final reflete o ganho líquido esperado.
+            * **Regressão (Estimativa de Tempo):** O modelo `scikit-learn LinearRegression` é usado para prever o `Tempo_dias` com base no `Valor_Causa_R$`, mostrando a tendência de que casos de maior valor/complexidade tendem a demorar mais.
+        """)
+        
+        st.markdown("<h4>3. Dados Brutos Processados</h4>", unsafe_allow_html=True)
+        st.markdown("Amostra do DataFrame processado (após limpeza e simulação de estratégia):")
+        st.dataframe(df_final.head(10), use_container_width=True)
 
 if __name__ == '__main__':
     main()
-
 
