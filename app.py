@@ -83,34 +83,53 @@ def carregar_dados_api_cnj():
         return pd.DataFrame(), f"Erro de Conexão com a API: {e}"
 
 def carregar_dados_simulados():
-    """Fallback para dados simulados quando a API falha na conexão ou limpeza."""
+    """
+    Fallback para dados simulados com um dataset ampliado e balanceado, 
+    garantindo que as taxas de sucesso e impacto sejam verossímeis (não 100% ou 0%).
+    """
     csv_data = """
 Classe_Processual,Estrategia_Escolhid,Resultado,Tempo_dias,Valor_Causa_R$
 Recurso Especial,Recorrer,1,1200,500000.00
-Agravo em Recurso Especial,Recorrer,0,800,120000.00
-Embargos de Divergência,Negociar,1,350,80000.00
+Recurso Especial,Recorrer,1,1300,550000.00
+Recurso Especial,Recorrer,0,850,300000.00
+Recurso Especial,Recorrer,1,1100,450000.00
+Recurso Especial,Recorrer,0,900,280000.00
 Recurso Especial,Negociar,1,400,250000.00
-Agravo em Recurso Especial,Desistir,0,200,50000.00
-Recurso Especial,Recorrer,1,1500,750000.00
-Embargos de Divergência,Negociar,1,500,150000.00
+Recurso Especial,Negociar,1,350,320000.00
+Recurso Especial,Negociar,0,600,150000.00
+Recurso Especial,Desistir,0,150,50000.00
 Recurso Especial,Desistir,0,100,20000.00
-Agravo em Recurso Especial,Recorrer,0,600,300000.00
-Embargos de Divergência,Negociar,1,450,95000.00
-Recurso Especial,Recorrer,1,1100,600000.00
-Agravo em Recurso Especial,Negociar,0,700,180000.00
-Embargos de Divergência,Desistir,1,250,45000.00
-Recurso Especial,Negociar,1,300,350000.00
-Agravo em Recurso Especial,Recorrer,0,180,70000.00
-Recurso Especial,Recorrer,1,1300,850000.00
-Embargos de Divergência,Negociar,1,550,170000.00
-Recurso Especial,Desistir,0,150,25000.00
-Agravo em Recurso Especial,Recorrer,0,500,320000.00
-Embargos de Divergência,Negociar,1,400,105000.00
-Recurso Especial,Recorrer,1,1400,900000.00
-Agravo em Recurso Especial,Negociar,0,850,220000.00
-Embargos de Divergência,Desistir,1,300,55000.00
-Recurso Especial,Negociar,1,250,450000.00
-Agravo em Recurso Especial,Recorrer,0,220,90000.00
+Agravo em Recurso Especial,Recorrer,1,1000,480000.00
+Agravo em Recurso Especial,Recorrer,0,700,120000.00
+Agravo em Recurso Especial,Recorrer,1,1150,520000.00
+Agravo em Recurso Especial,Recorrer,0,880,180000.00
+Agravo em Recurso Especial,Negociar,1,500,200000.00
+Agravo em Recurso Especial,Negociar,1,450,230000.00
+Agravo em Recurso Especial,Negociar,1,550,190000.00
+Agravo em Recurso Especial,Desistir,0,250,60000.00
+Agravo em Recurso Especial,Desistir,0,300,80000.00
+Embargos de Divergência,Negociar,1,350,80000.00
+Embargos de Divergência,Negociar,1,450,105000.00
+Embargos de Divergência,Negociar,1,500,95000.00
+Embargos de Divergência,Negociar,1,400,110000.00
+Embargos de Divergência,Negociar,0,600,75000.00
+Embargos de Divergência,Recorrer,1,700,150000.00
+Embargos de Divergência,Recorrer,0,800,90000.00
+Embargos de Divergência,Recorrer,0,650,115000.00
+Embargos de Divergência,Desistir,1,200,30000.00
+Embargos de Divergência,Desistir,0,150,15000.00
+Apelação Cível,Recorrer,1,1500,700000.00
+Apelação Cível,Recorrer,0,1200,400000.00
+Apelação Cível,Negociar,1,600,300000.00
+Apelação Cível,Negociar,1,550,280000.00
+Apelação Cível,Negociar,0,750,150000.00
+Apelação Cível,Desistir,0,350,70000.00
+Habeas Corpus,Recorrer,1,100,10000.00
+Habeas Corpus,Recorrer,1,120,10000.00
+Habeas Corpus,Recorrer,1,90,10000.00
+Habeas Corpus,Recorrer,0,150,10000.00
+Habeas Corpus,Negociar,1,80,10000.00
+Habeas Corpus,Desistir,0,50,10000.00
     """
     df = pd.read_csv(StringIO(csv_data))
     df['Tempo_dias'] = df['Tempo_dias'].astype(int)
@@ -129,7 +148,7 @@ def simular_estrategias(df):
     if 'Estrategia_Escolhid' not in df.columns:
         def categorizar_estrategia(classe):
             classe = str(classe).lower()
-            if 'recurso' in classe or 'agravo' in classe:
+            if 'recurso especial' in classe or 'agravo' in classe:
                 return np.random.choice(['Recorrer', 'Negociar', 'Desistir'], p=[0.7, 0.2, 0.1])
             elif 'embargos' in classe:
                 return np.random.choice(['Negociar', 'Recorrer', 'Desistir'], p=[0.6, 0.3, 0.1])
