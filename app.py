@@ -16,25 +16,39 @@ st.write("Analise estratégias processuais e visualize dados reais do CNJ (DataJ
 # ===========================
 
 @st.cache_data
-def carregar_dados_cnj(limite=100):
+def carregar_dados_cnj(limite=50):
     """
-    Busca dados reais de processos do CNJ (DataJud API),
-    autenticando com a chave pública do CNJ.
+    Consulta dados reais de processos no CNJ (DataJud API)
+    usando método POST com chave pública de autenticação.
     """
-    url = f"https://api-publica.datajud.cnj.jus.br/api_publica/proc/json?limit={limite}"
+    url = "https://api-publica.datajud.cnj.jus.br/api_publica/proc/json"
     headers = {
-        "Authorization": "APIKey cDZHYzlZa0JadVREZDJCendQbXY6SkJlTzNjLV9TRENyQk1RdnFKZGRQdw=="
+        "Authorization": "APIKey cDZHYzlZa0JadVREZDJCendQbXY6SkJlTzNjLV9TRENyQk1RdnFKZGRQdw==",
+        "Content-Type": "application/json"
     }
+    payload = {
+        "query": {"match_all": {}},
+        "size": limite
+    }
+
     try:
-        resposta = requests.get(url, headers=headers, timeout=30)
+        resposta = requests.post(url, headers=headers, json=payload, timeout=60)
         resposta.raise_for_status()
         dados = resposta.json()
-        resultados = dados.get("results", [])
+
+        if "hits" not in dados or "hits" not in dados["hits"]:
+            st.warning("A resposta do CNJ não contém resultados válidos.")
+            return pd.DataFrame()
+
+        resultados = dados["hits"]["hits"]
         if not resultados:
             st.warning("Nenhum processo retornado pela API do CNJ.")
             return pd.DataFrame()
+
+        # Normaliza os dados vindos da API (estrutura aninhada)
         df = pd.json_normalize(resultados)
         return df
+
     except Exception as e:
         st.error(f"Falha ao acessar a API do CNJ: {e}")
         return pd.DataFrame()
